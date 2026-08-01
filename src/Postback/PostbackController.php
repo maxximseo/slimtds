@@ -53,6 +53,7 @@ final class PostbackController
 
         $subid      = isset($params['subid']) ? trim((string)$params['subid']) : '';
         $token      = isset($params['token']) ? trim((string)$params['token']) : '';
+        $network    = isset($params['network']) ? strtolower(trim((string)$params['network'])) : '';
         $payoutRaw  = isset($params['payout']) ? $params['payout'] : '0';
         $status     = isset($params['status']) ? trim((string)$params['status']) : 'approved';
         $externalId = isset($params['external_id']) ? trim((string)$params['external_id']) : null;
@@ -95,10 +96,17 @@ final class PostbackController
         $offer = $this->offers->findByToken($token);
         $tokenScope = $offer !== null ? 'offer' : null;
         $campaignFromToken = null;
+        $networkConfig = null;
         if ($offer === null) {
             $campaignFromToken = $this->campaigns->findByPostbackToken($token);
             if ($campaignFromToken !== null) {
                 $tokenScope = 'campaign';
+            }
+        }
+        if ($tokenScope === null && $network !== '') {
+            $networkConfig = $this->networkConfig($network, $token);
+            if ($networkConfig !== null) {
+                $tokenScope = 'network';
             }
         }
         if ($tokenScope === null) {
@@ -179,6 +187,23 @@ final class PostbackController
             $offer = $this->offers->findById((string)$clickRow['offer_id']);
             if ($offer === null) {
                 return $this->json($response, ['ok' => false, 'error' => 'click offer no longer exists'], 410);
+            }
+        }
+
+        // Network-token: resolve the exact offer from the click and allow it
+        // only when its destination host belongs to the configured network.
+        // This lets one partner-wide postback safely cover multiple offers.
+        if ($tokenScope === 'network') {
+            if (empty($clickRow['offer_id'])) {
+                return $this->json($response, ['ok' => false, 'error' => 'click has no offer (trash fallthrough)'], 422);
+            }
+            $offer = $this->offers->findById((string)$clickRow['offer_id']);
+            if ($offer === null) {
+                return $this->json($response, ['ok' => false, 'error' => 'click offer no longer exists'], 410);
+            }
+            $offerHost = strtolower((string)(parse_url($offer->url, PHP_URL_HOST) ?: ''));
+            if ($offerHost === '' || !in_array($offerHost, $networkConfig['hosts'], true)) {
+                return $this->json($response, ['ok' => false, 'error' => 'network/click offer mismatch'], 409);
             }
         }
 
@@ -291,6 +316,30 @@ final class PostbackController
         }
 
         return $this->json($response, ['ok' => true, 'updated' => $updated]);
+    }
+
+    /**
+     * @return array{hosts: list<string>}|null
+     */
+    private function networkConfig(string $network, string $token): ?array
+    {
+        $decoded = json_decode((string)($_ENV['NETWORK_POSTBACKS'] ?? ''), true);
+        if (!is_array($decoded) || !isset($decoded[$network]) || !is_array($decoded[$network])) {
+            return null;
+        }
+
+        $configToken = (string)($decoded[$network]['token'] ?? '');
+        $hosts = $decoded[$network]['hosts'] ?? null;
+        if (strlen($configToken) < 32 || !hash_equals($configToken, $token) || !is_array($hosts)) {
+            return null;
+        }
+
+        $hosts = array_values(array_unique(array_filter(array_map(
+            static fn (mixed $host): string => strtolower(trim((string)$host)),
+            $hosts,
+        ))));
+
+        return $hosts === [] ? null : ['hosts' => $hosts];
     }
 
     /** ISO-2 country → 🇦🇷-style regional-indicator flag (or '' on bad input). */
