@@ -52,7 +52,7 @@ Then open the admin login shown at the end of `make up` and sign in with
   any external lander can report events. Includes zero-site-change session
   recording via a bundled rrweb client.
 - **Postback** — incoming `/postback` (GET/POST, idempotent UPSERT on
-  `subid+status`, per-offer and campaign-level catch-all tokens) plus a
+  `subid+status`, per-offer, campaign-level, and host-restricted partner-network tokens) plus a
   decoupled outgoing delivery worker with exponential-backoff retry.
 - **Admin** — campaigns, global offers (reusable across campaigns via flow
   targets), an Alpine.js flow/filter builder, click/conversion logs, an

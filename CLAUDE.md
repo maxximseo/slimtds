@@ -75,7 +75,7 @@ After editing CSS/JS templates, rebuild assets — admin views resolve URLs thro
 ### Other request entry points
 
 - `/p.js` (`Pixel\ScriptController`) + `/p/event` (`Pixel\EventController`, has OPTIONS preflight + permissive CORS so any external lander can fire). Events land in `stats.pixel_events` (also partitioned).
-- `/postback` (GET+POST, `Postback\PostbackController`) — receives affiliate callbacks; UPSERTs `core.conversions` (idempotent on `subid+status`). Supports per-offer tokens *and* a campaign-level catch-all token (incl. anonymous pings without subid).
+- `/postback` (GET+POST, `Postback\PostbackController`) — receives affiliate callbacks; UPSERTs `core.conversions` (idempotent on `subid+status`). Supports per-offer tokens, a campaign-level catch-all token (incl. anonymous pings without subid), and optional host-restricted partner-network tokens from `NETWORK_POSTBACKS`.
 - Admin lives under `/admin` with middleware stack (`Session → Locale → Csrf → RateLimit → Auth → PasswordChangeRequired`). All routes in `config/routes.php` — that file is the canonical inventory.
 
 ### Outgoing postbacks

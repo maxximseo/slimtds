@@ -16,6 +16,7 @@ use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Response;
 
 beforeEach(function (): void {
+    unset($_ENV['NETWORK_POSTBACKS']);
     $pdo = pdo();
     $pdo->exec('DELETE FROM core.conversions');
     $pdo->exec('DELETE FROM stats.clicks');
@@ -50,6 +51,10 @@ beforeEach(function (): void {
         "INSERT INTO stats.clicks (id, campaign_id, visitor_uuid, ip)
          VALUES (uuidv7(), '{$this->camp->id}', gen_random_uuid()::uuid, '1.1.1.1')",
     );
+});
+
+afterEach(function (): void {
+    unset($_ENV['NETWORK_POSTBACKS']);
 });
 
 function pbRequest(array $params): \Psr\Http\Message\ServerRequestInterface
@@ -143,4 +148,76 @@ test('shared offer accepts postback for click from any campaign', function (): v
     expect($resp->getStatusCode())->toBe(200);
     $row = $this->db->fetchOne('SELECT campaign_id FROM core.conversions WHERE click_id = :cid', ['cid' => $cid]);
     expect($row['campaign_id'])->toBe($this->camp->id); // conversion attributed to click's campaign
+});
+
+test('network token resolves the exact offer from the click', function (): void {
+    $cid = clickId($this);
+    $this->db->execute(
+        'UPDATE stats.clicks SET offer_id = :offer_id WHERE id = :id',
+        ['offer_id' => $this->offer->id, 'id' => $cid],
+    );
+    $_ENV['NETWORK_POSTBACKS'] = json_encode([
+        'example' => [
+            'token' => str_repeat('a', 40),
+            'hosts' => ['example.com'],
+        ],
+    ], JSON_THROW_ON_ERROR);
+
+    $resp = ($this->ctrl)(pbRequest([
+        'network' => 'example',
+        'subid'   => $cid,
+        'token'   => str_repeat('a', 40),
+        'payout'  => '9.25',
+        'status'  => 'approved',
+    ]), new Response());
+
+    expect($resp->getStatusCode())->toBe(200);
+    $row = $this->db->fetchOne(
+        'SELECT offer_id, payout FROM core.conversions WHERE click_id = :cid',
+        ['cid' => $cid],
+    );
+    expect($row['offer_id'])->toBe($this->offer->id);
+    expect((float)$row['payout'])->toBe(9.25);
+});
+
+test('network token rejects a click whose offer host belongs to another network', function (): void {
+    $cid = clickId($this);
+    $this->db->execute(
+        'UPDATE stats.clicks SET offer_id = :offer_id WHERE id = :id',
+        ['offer_id' => $this->offer->id, 'id' => $cid],
+    );
+    $_ENV['NETWORK_POSTBACKS'] = json_encode([
+        'example' => [
+            'token' => str_repeat('b', 40),
+            'hosts' => ['offers.example.net'],
+        ],
+    ], JSON_THROW_ON_ERROR);
+
+    $resp = ($this->ctrl)(pbRequest([
+        'network' => 'example',
+        'subid'   => $cid,
+        'token'   => str_repeat('b', 40),
+    ]), new Response());
+
+    expect($resp->getStatusCode())->toBe(409);
+    expect((int)$this->db->fetchScalar('SELECT count(*) FROM core.conversions'))->toBe(0);
+});
+
+test('network token requires a bound offer on the click', function (): void {
+    $cid = clickId($this);
+    $_ENV['NETWORK_POSTBACKS'] = json_encode([
+        'example' => [
+            'token' => str_repeat('c', 40),
+            'hosts' => ['example.com'],
+        ],
+    ], JSON_THROW_ON_ERROR);
+
+    $resp = ($this->ctrl)(pbRequest([
+        'network' => 'example',
+        'subid'   => $cid,
+        'token'   => str_repeat('c', 40),
+    ]), new Response());
+
+    expect($resp->getStatusCode())->toBe(422);
+    expect((int)$this->db->fetchScalar('SELECT count(*) FROM core.conversions'))->toBe(0);
 });
