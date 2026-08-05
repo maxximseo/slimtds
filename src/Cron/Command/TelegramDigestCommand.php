@@ -41,8 +41,11 @@ final class TelegramDigestCommand extends Command
 
         $since = date('Y-m-d\TH:i:sP', strtotime('-24 hours'));
 
-        // Top-line summary across all campaigns
+        // Top-line summary: search/AI visitors, but conversions across ALL
+        // sources — a deposit from direct traffic is still money and must
+        // never render as "Conv: 0 · $0.00" in the daily digest.
         $totals = $this->stats->searchSummary(null, $since);
+        $convs  = $this->stats->digestConversions(null, $since);
 
         $lines = [
             sprintf(
@@ -54,13 +57,15 @@ final class TelegramDigestCommand extends Command
                 $totals['clicks'],
             ),
             sprintf(
-                'Conv: <b>%d</b> (approved: %d) · Payout: <b>$%s</b>',
-                $totals['conversions'],
-                $totals['approved'],
-                number_format((float)$totals['payout'], 2),
+                'Conv (все источники): <b>%d</b> (approved: %d) · Payout: <b>$%s</b>',
+                $convs['conversions'],
+                $convs['approved'],
+                number_format((float)$convs['payout'], 2),
             ),
             sprintf(
-                'CR: <b>%s%%</b> · EPC: <b>$%s</b>',
+                'Search: %d conv · $%s · CR <b>%s%%</b> · EPC <b>$%s</b>',
+                $totals['approved'],
+                number_format((float)$totals['payout'], 2),
                 $totals['cr'],
                 number_format($totals['epc'], 4),
             ),
@@ -71,9 +76,12 @@ final class TelegramDigestCommand extends Command
         $rows = [];
 
         foreach ($allCampaigns as $campaign) {
-            $s = $this->stats->searchSummary($campaign->id, $since);
-            if ($s['clicks'] > 0) {
-                $rows[] = ['campaign' => $campaign, 'stats' => $s];
+            $s  = $this->stats->searchSummary($campaign->id, $since);
+            $cv = $this->stats->digestConversions($campaign->id, $since);
+            // A campaign with a conversion but zero search visitors still
+            // belongs in the list — money events must stay visible.
+            if ($s['clicks'] > 0 || $cv['conversions'] > 0) {
+                $rows[] = ['campaign' => $campaign, 'stats' => $s, 'convs' => $cv];
             }
         }
 
@@ -85,15 +93,16 @@ final class TelegramDigestCommand extends Command
             $lines[] = '';
             $lines[] = '<b>Top campaigns (unique search visitors):</b>';
             foreach ($rows as $i => $row) {
-                $c = $row['campaign'];
-                $s = $row['stats'];
+                $c  = $row['campaign'];
+                $s  = $row['stats'];
+                $cv = $row['convs'];
                 $lines[] = sprintf(
                     '%d. <b>%s</b> — %d visitors · %d conv · $%s',
                     $i + 1,
                     $c->name,
                     $s['clicks'],
-                    $s['approved'],
-                    number_format((float)$s['payout'], 2),
+                    $cv['approved'],
+                    number_format((float)$cv['payout'], 2),
                 );
             }
         }

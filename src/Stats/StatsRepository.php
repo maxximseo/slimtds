@@ -138,6 +138,42 @@ final class StatsRepository
     }
 
     /**
+     * Conversion KPIs for a window across ALL traffic sources (digest use).
+     * Conversions are money events — unlike search stats they must not be
+     * hidden by the search/AI entry-source filter, otherwise a real deposit
+     * from direct/type-in traffic shows up in Telegram as "Conv: 0 · $0.00".
+     * Bot-click conversions are excluded; click-less campaign pings count.
+     *
+     * @return array{conversions:int, approved:int, payout:string}
+     */
+    public function digestConversions(?string $campaignId, string $sinceIso): array
+    {
+        $campaignWhere = $campaignId !== null ? 'AND cv.campaign_id = :cid' : '';
+        $params = ['since' => $sinceIso];
+        if ($campaignId !== null) {
+            $params['cid'] = $campaignId;
+        }
+
+        $row = $this->db->fetchOne(
+            "SELECT count(cv.id)::int AS conversions,
+                    count(cv.id) FILTER (WHERE cv.status = 'approved')::int AS approved,
+                    COALESCE(sum(cv.payout) FILTER (WHERE cv.status = 'approved'), 0)::text AS payout
+             FROM core.conversions cv
+             LEFT JOIN stats.clicks c ON c.id = cv.click_id
+             WHERE cv.created_at >= :since
+               AND (c.id IS NULL OR c.is_bot = false)
+               {$campaignWhere}",
+            $params,
+        ) ?? ['conversions' => 0, 'approved' => 0, 'payout' => '0'];
+
+        return [
+            'conversions' => (int)$row['conversions'],
+            'approved'    => (int)$row['approved'],
+            'payout'      => (string)$row['payout'],
+        ];
+    }
+
+    /**
      * @return list<array{hour:string, clicks:int, uniq:int, bot:int}>
      */
     public function searchClicksTimeline(?string $campaignId, string $sinceIso): array
