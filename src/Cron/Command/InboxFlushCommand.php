@@ -192,7 +192,7 @@ final class InboxFlushCommand extends Command
         $sources = $this->sources('notif_ai_pixel_sources');
         if (!in_array($engine, $sources, true)) return;
 
-        $emoji = in_array($engine, ['chatgpt', 'perplexity', 'claude', 'gemini', 'copilot'], true) ? '🤖' : '🔍';
+        $emoji = SearchEngine::isAi($engine) ? '🤖' : '🔍';
         $appUrl = rtrim((string)($_ENV['APP_URL'] ?? 'https://slimtds.local'), '/');
         $url = is_string($payload['url'] ?? null) ? (string)$payload['url'] : '';
         $event = is_string($payload['event'] ?? null) ? (string)$payload['event'] : 'pageview';

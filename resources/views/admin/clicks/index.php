@@ -384,11 +384,9 @@ require __DIR__ . '/../../_partials/page-header.php';
 
     <?php if (!empty($visitor)): ?>
         <?php
-        $sourceEmoji = static fn (?string $src): string => match ($src) {
-            'chatgpt', 'perplexity', 'claude', 'gemini', 'copilot' => '🤖',
-            null, ''  => '🔗',
-            default   => '🔍',
-        };
+        $sourceEmoji = static fn (?string $src): string => ($src === null || $src === '')
+            ? '🔗'
+            : (\App\Shared\Referer\SearchEngine::isAi($src) ? '🤖' : '🔍');
         $kindEmoji = ['pageview' => '📄', 'click' => '🖱', 'conversion' => '💵'];
         $entrySrc = $visitor['entry']['source'] ?? null;
         $entryRef = (string)($visitor['entry']['ref'] ?? '');

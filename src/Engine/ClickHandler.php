@@ -343,7 +343,7 @@ final class ClickHandler
             if ($row === null) return;
 
             $src = SearchEngine::classify((string)($row['referer'] ?? '')) ?? 'ai';
-            $emoji = in_array($src, ['chatgpt', 'perplexity', 'claude', 'gemini', 'copilot'], true) ? '🤖' : '🔍';
+            $emoji = SearchEngine::isAi($src) ? '🤖' : '🔍';
             $appUrl = rtrim((string)($_ENV['APP_URL'] ?? 'https://slimtds.local'), '/');
 
             $route = [];

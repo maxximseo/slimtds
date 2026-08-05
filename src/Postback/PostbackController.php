@@ -307,11 +307,7 @@ final class PostbackController
                 ) ?? '');
                 if ($entryRef !== '') {
                     $src = SearchEngine::classify($entryRef);
-                    $emoji = match ($src) {
-                        'chatgpt', 'perplexity', 'claude', 'gemini', 'copilot' => '🤖',
-                        null => '🔗',
-                        default => '🔍',
-                    };
+                    $emoji = $src === null ? '🔗' : (SearchEngine::isAi($src) ? '🤖' : '🔍');
                     $source = $emoji . ' ' . ($src ?? (parse_url($entryRef, PHP_URL_HOST) ?: 'direct'));
                 }
             }

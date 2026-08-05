@@ -37,11 +37,9 @@ $sel = function (string $name, array $options, ?string $selected, string $allLab
 };
 
 // Traffic-source emoji (same convention as clicks): AI bots / search / direct.
-$sourceEmoji = static fn (?string $src): string => match ($src) {
-    'chatgpt', 'perplexity', 'claude', 'gemini', 'copilot' => '🤖',
-    null, ''  => '🔗',
-    default   => '🔍',
-};
+$sourceEmoji = static fn (?string $src): string => ($src === null || $src === '')
+    ? '🔗'
+    : (\App\Shared\Referer\SearchEngine::isAi($src) ? '🤖' : '🔍');
 
 // Active filters as query params (reused for sort headers + pagination).
 $activeQ = array_filter([
