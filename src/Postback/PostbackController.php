@@ -207,6 +207,25 @@ final class PostbackController
             }
         }
 
+        // Currency: the offer declares the currency its network pays in
+        // (core.offers.currency). Stats/KPIs assume a single unit, so a
+        // non-USD payout is converted to USD at ingest using POSTBACK_FX_RATES
+        // (JSON env map of currency → units per 1 USD, e.g. {"RUB": 81.05}).
+        // ponytail: static operator-maintained rate — rate drift shows up as
+        // slightly off USD estimates; upgrade path is a rates table with
+        // auto-refresh. Without a configured rate the native amount is stored
+        // with its own currency — never silently mislabelled as USD.
+        $nativePayout   = $payout;
+        $nativeCurrency = strtoupper($offer->currency);
+        $fxRates        = self::fxRates();
+        if ($nativeCurrency !== 'USD' && ($fxRates[$nativeCurrency] ?? 0.0) > 0.0) {
+            $payout       = (string)round((float)$nativePayout / $fxRates[$nativeCurrency], 2);
+            $convCurrency = 'USD';
+        } else {
+            $convCurrency = $nativeCurrency;
+        }
+        $payoutDisplay = self::payoutDisplay($nativePayout, $nativeCurrency, $payout, $convCurrency);
+
         // Check whether a conversion already exists for this click_id
         $existing = (int)$this->db->fetchScalar(
             'SELECT count(*) FROM core.conversions WHERE click_id = :cid',
@@ -220,12 +239,13 @@ final class PostbackController
                 INSERT INTO core.conversions
                     (click_id, campaign_id, offer_id, payout, status, external_id, currency, source_ip, raw_query)
                 VALUES
-                    (:click_id, :campaign_id, :offer_id, :payout, :status, :external_id, 'USD', :source_ip, :raw_query)
+                    (:click_id, :campaign_id, :offer_id, :payout, :status, :external_id, :currency, :source_ip, :raw_query)
                 ON CONFLICT (click_id)
                 DO UPDATE SET
                     payout      = EXCLUDED.payout,
                     status      = EXCLUDED.status,
                     external_id = EXCLUDED.external_id,
+                    currency    = EXCLUDED.currency,
                     source_ip   = EXCLUDED.source_ip,
                     raw_query   = EXCLUDED.raw_query,
                     updated_at  = now()
@@ -238,6 +258,7 @@ final class PostbackController
                 'payout'      => $payout,
                 'status'      => $status,
                 'external_id' => $externalId !== '' ? $externalId : null,
+                'currency'    => $convCurrency,
                 'source_ip'   => $sourceIp !== '' && $sourceIp !== '0.0.0.0' ? $sourceIp : null,
                 'raw_query'   => $rawQuery !== '' ? $rawQuery : null,
             ],
@@ -251,7 +272,7 @@ final class PostbackController
                 'payout'      => $payout,
                 'status'      => $status,
                 'external_id' => $externalId ?? '',
-                'currency'    => $offer->currency,
+                'currency'    => $convCurrency,
             ]);
         }
 
@@ -301,7 +322,7 @@ final class PostbackController
                 [
                     'offer_name' => $offer->name,
                     'status'     => $status,
-                    'payout'     => $payout,
+                    'payout'     => $payoutDisplay,
                     'route'      => implode(' · ', $route),
                     'source'     => $source,
                     'player_id'  => $externalId !== '' && $externalId !== null ? (string)$externalId : '',
@@ -316,6 +337,43 @@ final class PostbackController
         }
 
         return $this->json($response, ['ok' => true, 'updated' => $updated]);
+    }
+
+    /**
+     * FX rates from the POSTBACK_FX_RATES env JSON: currency → units per 1 USD.
+     *
+     * @return array<string, float>
+     */
+    private static function fxRates(): array
+    {
+        $decoded = json_decode((string)($_ENV['POSTBACK_FX_RATES'] ?? ''), true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+        $rates = [];
+        foreach ($decoded as $currency => $rate) {
+            if (is_numeric($rate) && (float)$rate > 0.0) {
+                $rates[strtoupper((string)$currency)] = (float)$rate;
+            }
+        }
+        return $rates;
+    }
+
+    /** Human payout string: native amount, plus USD equivalent when converted. */
+    private static function payoutDisplay(string $native, string $nativeCur, string $stored, string $storedCur): string
+    {
+        $fmt = static fn (string $amount, string $cur): string => match ($cur) {
+            'USD' => '$' . $amount,
+            'EUR' => '€' . $amount,
+            'GBP' => '£' . $amount,
+            'RUB' => '₽' . $amount,
+            default => $amount . ' ' . $cur,
+        };
+        $nativeFmt = $fmt($native, $nativeCur);
+        if ($nativeCur === $storedCur) {
+            return $nativeFmt;
+        }
+        return $nativeFmt . ' (~' . $fmt($stored, $storedCur) . ')';
     }
 
     /**
