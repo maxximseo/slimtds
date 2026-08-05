@@ -22,11 +22,21 @@ final class SearchEngine
     public const ENGINES = [
         // AI assistants — listed before traditional engines so e.g. gemini.google.com
         // doesn't get swallowed by the bare 'google' pattern.
-        'chatgpt'    => ['chatgpt.com', 'chat.openai.com'],
-        'perplexity' => ['perplexity.ai'],
-        'claude'     => ['claude.ai'],
-        'gemini'     => ['gemini.google.com'],
-        'copilot'    => ['copilot.microsoft.com', 'bing.com/chat'],
+        'chatgpt'      => ['chatgpt.com', 'chat.openai.com'],
+        'perplexity'   => ['perplexity.ai'],
+        'claude'       => ['claude.ai'],
+        'gemini'       => ['gemini.google.com'],
+        'copilot'      => ['copilot.microsoft.com', 'copilot.cloud.microsoft', 'bing.com/chat'],
+        'deepseek'     => ['chat.deepseek.com', 'deepseek.com'],
+        'grok'         => ['grok.com', 'grok.x.ai'],
+        'meta_ai'      => ['meta.ai'],
+        'mistral'      => ['chat.mistral.ai', 'mistral.ai'],
+        'qwen'         => ['chat.qwen.ai', 'qwen.ai'],
+        'kimi'         => ['kimi.com', 'kimi.moonshot.cn', 'kimi.moonshot.ai'],
+        'poe'          => ['poe.com'],
+        'you'          => ['you.com'],
+        'notebooklm'   => ['notebooklm.google.com'],
+        'yandex_neuro' => ['ya.ru/neuro', 'neuro.yandex', 'alice.yandex'],
         // Traditional search engines.
         'google'     => ['.google.', '//google.', 'webcache.googleusercontent'],
         'bing'       => ['bing.com'],
@@ -41,6 +51,25 @@ final class SearchEngine
         'seznam'     => ['seznam.cz'],
         'startpage'  => ['startpage.com'],
     ];
+
+    /**
+     * Engine keys that are AI assistants (must stay a subset of ENGINES keys).
+     * Used to render the 🤖 source emoji — keep this as the single source of
+     * truth instead of hardcoding key lists at every display site.
+     *
+     * @var list<string>
+     */
+    public const AI_ENGINES = [
+        'chatgpt', 'perplexity', 'claude', 'gemini', 'copilot',
+        'deepseek', 'grok', 'meta_ai', 'mistral', 'qwen', 'kimi', 'poe',
+        'you', 'notebooklm', 'yandex_neuro',
+    ];
+
+    /** True when the engine key is an AI assistant (🤖), false for classic search / unknown. */
+    public static function isAi(?string $engine): bool
+    {
+        return $engine !== null && in_array($engine, self::AI_ENGINES, true);
+    }
 
     /** Returns engine key (e.g. "google") or null. */
     public static function classify(?string $referer): ?string

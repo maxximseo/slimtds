@@ -69,6 +69,53 @@ test('sqlFilterEngines ORs patterns of the given engines only', function (): voi
     expect($params['se_0'])->toBe('%chatgpt.com%');
 });
 
+test('classify recognises AI assistants and they are flagged by isAi', function (): void {
+    $cases = [
+        'https://chatgpt.com/share/abc'                 => 'chatgpt',
+        'https://www.perplexity.ai/search?q=x'          => 'perplexity',
+        'https://claude.ai/chat/123'                    => 'claude',
+        'https://gemini.google.com/app/123'             => 'gemini',
+        'https://copilot.microsoft.com/chats/abc'       => 'copilot',
+        'https://chat.deepseek.com/'                    => 'deepseek',
+        'https://grok.com/chat/123'                     => 'grok',
+        'https://www.meta.ai/prompt/x'                  => 'meta_ai',
+        'https://chat.mistral.ai/chat/123'              => 'mistral',
+        'https://chat.qwen.ai/'                         => 'qwen',
+        'https://kimi.com/chat/123'                     => 'kimi',
+        'https://poe.com/ChatGPT'                       => 'poe',
+        'https://you.com/search?q=x'                    => 'you',
+        'https://notebooklm.google.com/notebook/123'    => 'notebooklm',
+        'https://ya.ru/neuro?utm=x'                     => 'yandex_neuro',
+    ];
+    foreach ($cases as $referer => $engine) {
+        expect(SearchEngine::classify($referer))->toBe($engine, $referer);
+        expect(SearchEngine::isAi($engine))->toBeTrue($engine);
+    }
+});
+
+test('AI engines win over the classic-engine host they live on', function (): void {
+    // gemini/notebooklm subdomains must not be swallowed by 'google',
+    // neuro/alice subdomains must not be swallowed by 'yandex'
+    expect(SearchEngine::classify('https://gemini.google.com/app'))->toBe('gemini');
+    expect(SearchEngine::classify('https://notebooklm.google.com/'))->toBe('notebooklm');
+    expect(SearchEngine::classify('https://neuro.yandex.ru/'))->toBe('yandex_neuro');
+    expect(SearchEngine::classify('https://alice.yandex.ru/'))->toBe('yandex_neuro');
+});
+
+test('isAi is false for classic engines, null and unknown keys', function (): void {
+    expect(SearchEngine::isAi('google'))->toBeFalse();
+    expect(SearchEngine::isAi('bing'))->toBeFalse();
+    expect(SearchEngine::isAi('yandex'))->toBeFalse();
+    expect(SearchEngine::isAi(null))->toBeFalse();
+    expect(SearchEngine::isAi('not-a-real-engine'))->toBeFalse();
+});
+
+test('every AI_ENGINES key exists in ENGINES', function (): void {
+    foreach (SearchEngine::AI_ENGINES as $key) {
+        expect(SearchEngine::ENGINES)->toHaveKey($key);
+    }
+});
+
 test('sqlFilterEngines is a no-op for empty / unknown engine lists', function (): void {
     expect(SearchEngine::sqlFilterEngines([], 'pe.referer'))->toBe(['', []]);
     expect(SearchEngine::sqlFilterEngines(['not-real'], 'pe.referer'))->toBe(['', []]);
