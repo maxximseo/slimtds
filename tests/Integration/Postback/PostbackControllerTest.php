@@ -16,7 +16,7 @@ use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Response;
 
 beforeEach(function (): void {
-    unset($_ENV['NETWORK_POSTBACKS']);
+    unset($_ENV['NETWORK_POSTBACKS'], $_ENV['POSTBACK_FX_RATES']);
     $pdo = pdo();
     $pdo->exec('DELETE FROM core.conversions');
     $pdo->exec('DELETE FROM stats.clicks');
@@ -54,7 +54,7 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
-    unset($_ENV['NETWORK_POSTBACKS']);
+    unset($_ENV['NETWORK_POSTBACKS'], $_ENV['POSTBACK_FX_RATES']);
 });
 
 function pbRequest(array $params): \Psr\Http\Message\ServerRequestInterface
@@ -220,4 +220,51 @@ test('network token requires a bound offer on the click', function (): void {
 
     expect($resp->getStatusCode())->toBe(422);
     expect((int)$this->db->fetchScalar('SELECT count(*) FROM core.conversions'))->toBe(0);
+});
+
+test('non-USD offer payout is converted to USD with a configured FX rate', function (): void {
+    $cid = clickId($this);
+    $this->db->execute('UPDATE core.offers SET currency = :cur WHERE id = :id', ['cur' => 'RUB', 'id' => $this->offer->id]);
+    $_ENV['POSTBACK_FX_RATES'] = '{"RUB": 90}';
+
+    $resp = ($this->ctrl)(pbRequest([
+        'subid'  => $cid,
+        'token'  => $this->offer->postbackToken,
+        'payout' => '4500',
+        'status' => 'approved',
+    ]), new Response());
+
+    expect($resp->getStatusCode())->toBe(200);
+    $row = $this->db->fetchOne(
+        'SELECT payout, currency FROM core.conversions WHERE click_id = :cid',
+        ['cid' => $cid],
+    );
+    expect((float)$row['payout'])->toBe(50.0);
+    expect($row['currency'])->toBe('USD');
+
+    // re-postback (status update) must not double-convert
+    ($this->ctrl)(pbRequest(['subid' => $cid, 'token' => $this->offer->postbackToken, 'payout' => '4500', 'status' => 'approved']), new Response());
+    $row = $this->db->fetchOne('SELECT payout, currency FROM core.conversions WHERE click_id = :cid', ['cid' => $cid]);
+    expect((float)$row['payout'])->toBe(50.0);
+    expect($row['currency'])->toBe('USD');
+});
+
+test('non-USD offer payout without a rate keeps its native currency', function (): void {
+    $cid = clickId($this);
+    $this->db->execute('UPDATE core.offers SET currency = :cur WHERE id = :id', ['cur' => 'RUB', 'id' => $this->offer->id]);
+    unset($_ENV['POSTBACK_FX_RATES']);
+
+    $resp = ($this->ctrl)(pbRequest([
+        'subid'  => $cid,
+        'token'  => $this->offer->postbackToken,
+        'payout' => '4500',
+    ]), new Response());
+
+    expect($resp->getStatusCode())->toBe(200);
+    $row = $this->db->fetchOne(
+        'SELECT payout, currency FROM core.conversions WHERE click_id = :cid',
+        ['cid' => $cid],
+    );
+    expect((float)$row['payout'])->toBe(4500.0);
+    expect($row['currency'])->toBe('RUB');
 });

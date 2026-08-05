@@ -64,11 +64,11 @@ final class NotificationRegistry
             self::CONV_CLICK => [
                 'label'       => 'Conversion — postback attributed to a click',
                 'has_sources' => false,
-                'default'     => "💵 <b>{offer_name}</b> · {status} · \${payout}\n🌍 {route}\n{source}\n👤 player {player_id} · {age} после клика\n{app_url}/admin/clicks?click_id={click_id}",
+                'default'     => "💵 <b>{offer_name}</b> · {status} · {payout}\n🌍 {route}\n{source}\n👤 player {player_id} · {age} после клика\n{app_url}/admin/clicks?click_id={click_id}",
                 'macros'      => [
                     'offer_name' => 'Offer name',
                     'status'     => 'Conversion status',
-                    'payout'     => 'Payout amount',
+                    'payout'     => 'Payout display (native amount, plus USD equivalent when FX-converted)',
                     'route'      => 'lander → button · COUNTRY · device',
                     'source'     => 'Entry source (engine key or host or "direct")',
                     'player_id'  => 'External/player id (may be empty)',
