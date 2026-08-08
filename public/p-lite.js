@@ -15,6 +15,10 @@
   }
   if (!campaign) return
 
+  var guard = '__slimTdsLite:' + endpoint + ':' + campaign
+  if (window[guard]) return
+  window[guard] = true
+
   var ref = document.referrer || ''
   try {
     var key = 'slim_entry_ref'

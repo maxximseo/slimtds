@@ -55,3 +55,55 @@ test('different UA triggers fresh uuid', function (): void {
     $this->resolver->resolve($req, $b);
     expect($a->visitorUuid)->not->toBe($b->visitorUuid);
 });
+
+test('serializes concurrent resolution for the same fingerprint', function (): void {
+    if (!function_exists('pcntl_fork')) {
+        $this->markTestSkipped('pcntl is required for the concurrency check');
+    }
+
+    $ip = '10.20.30.40';
+    $ua = 'visitor-race-test';
+    $accept = 'en-US';
+    $knownUuid = '019dc137-724a-756c-923a-a392001e3d79';
+    $fpHash = hash('sha256', $ip . '|' . $ua . '|' . $accept . '|' . $_ENV['APP_SECRET'], false);
+    $resultFile = tempnam(sys_get_temp_dir(), 'visitor-race-');
+    expect($resultFile)->not->toBeFalse();
+
+    $parent = pdo();
+    $parent->beginTransaction();
+    $lock = $parent->prepare('SELECT pg_advisory_xact_lock(hashtextextended(:h, 0))');
+    $lock->execute(['h' => $fpHash]);
+
+    $pid = pcntl_fork();
+    expect($pid)->toBeGreaterThanOrEqual(0);
+
+    if ($pid === 0) {
+        $pdo = new PDO(
+            $_ENV['DB_DSN'],
+            $_ENV['DB_USER'],
+            $_ENV['DB_PASSWORD'],
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false],
+        );
+        $resolver = new VisitorResolver(new Connection($pdo));
+        $request = (new ServerRequestFactory())->createServerRequest('GET', '/demo01')
+            ->withHeader('Accept-Language', $accept);
+        $ctx = new Context($ip, $ua, 'demo01', time());
+        $needCookie = $resolver->resolve($request, $ctx);
+        file_put_contents($resultFile, json_encode([$ctx->visitorUuid, $ctx->isUniqVisitor, $needCookie]));
+        exit(0);
+    }
+
+    usleep(200_000);
+    $insert = $parent->prepare(
+        "INSERT INTO stats.visitors_fingerprints (fp_hash, visitor_uuid) VALUES (decode(:h, 'hex'), :uuid)",
+    );
+    $insert->execute(['h' => $fpHash, 'uuid' => $knownUuid]);
+    $parent->commit();
+    pcntl_waitpid($pid, $status);
+
+    $result = json_decode((string) file_get_contents($resultFile), true);
+    unlink($resultFile);
+
+    expect(pcntl_wexitstatus($status))->toBe(0)
+        ->and($result)->toBe([$knownUuid, false, false]);
+});
