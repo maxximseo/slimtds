@@ -55,3 +55,67 @@ test('different UA triggers fresh uuid', function (): void {
     $this->resolver->resolve($req, $b);
     expect($a->visitorUuid)->not->toBe($b->visitorUuid);
 });
+
+test('serializes concurrent resolution for the same fingerprint', function (): void {
+    $ip = '10.20.30.40';
+    $ua = 'visitor-race-test';
+    $accept = 'en-US';
+    $knownUuid = '019dc137-724a-756c-923a-a392001e3d79';
+    $fpHash = hash('sha256', $ip . '|' . $ua . '|' . $accept . '|' . $_ENV['APP_SECRET'], false);
+    $resultFile = tempnam(sys_get_temp_dir(), 'visitor-race-');
+    expect($resultFile)->not->toBeFalse();
+
+    $parent = pdo();
+    $parent->beginTransaction();
+    $lock = $parent->prepare('SELECT pg_advisory_xact_lock(hashtextextended(:h, 0))');
+    $lock->execute(['h' => $fpHash]);
+
+    $child = <<<'PHP'
+        require $argv[2];
+        $pdo = new PDO($argv[3], $argv[4], $argv[5], [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]);
+        $_ENV['APP_SECRET'] = $argv[6];
+        $resolver = new App\Engine\VisitorResolver(new App\Shared\Db\Connection($pdo));
+        $request = (new Slim\Psr7\Factory\ServerRequestFactory())
+            ->createServerRequest('GET', '/demo01')
+            ->withHeader('Accept-Language', 'en-US');
+        $ctx = new App\Engine\Context('10.20.30.40', 'visitor-race-test', 'demo01', time());
+        $needCookie = $resolver->resolve($request, $ctx);
+        file_put_contents($argv[1], json_encode([$ctx->visitorUuid, $ctx->isUniqVisitor, $needCookie]));
+        PHP;
+    $process = proc_open(
+        [
+            PHP_BINARY,
+            '-r',
+            $child,
+            $resultFile,
+            dirname(__DIR__, 3) . '/vendor/autoload.php',
+            $_ENV['DB_DSN'],
+            $_ENV['DB_USER'],
+            $_ENV['DB_PASSWORD'],
+            $_ENV['APP_SECRET'],
+        ],
+        [2 => ['pipe', 'w']],
+        $pipes,
+    );
+    expect($process)->toBeResource();
+
+    usleep(200_000);
+    $insert = $parent->prepare(
+        "INSERT INTO stats.visitors_fingerprints (fp_hash, visitor_uuid) VALUES (decode(:h, 'hex'), :uuid)",
+    );
+    $insert->execute(['h' => $fpHash, 'uuid' => $knownUuid]);
+    $parent->commit();
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $status = proc_close($process);
+
+    $result = json_decode((string) file_get_contents($resultFile), true);
+    unlink($resultFile);
+
+    expect($status)->toBe(0)
+        ->and($stderr)->toBe('')
+        ->and($result)->toBe([$knownUuid, false, false]);
+});

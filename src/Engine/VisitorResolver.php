@@ -38,33 +38,40 @@ final class VisitorResolver
         // SHA-256 hex string — converted to bytea via decode(:h,'hex') in SQL
         $fpHash = hash('sha256', $ctx->ip . '|' . $ctx->userAgent . '|' . $accept . '|' . $salt, false);
 
-        $row = $this->db->fetchOne(
-            <<<SQL
-                SELECT visitor_uuid::text AS uuid
-                FROM stats.visitors_fingerprints
-                WHERE fp_hash = decode(:h, 'hex')
-                  AND created_at > now() - interval '24 hours'
-                ORDER BY created_at DESC
-                LIMIT 1
-            SQL,
-            ['h' => $fpHash],
-        );
+        return $this->db->transactional(function (Connection $db) use ($ctx, $fpHash): bool {
+            $db->fetchScalar(
+                'SELECT pg_advisory_xact_lock(hashtextextended(:h, 0))',
+                ['h' => $fpHash],
+            );
 
-        if ($row !== null && isset($row['uuid'])) {
-            $ctx->visitorUuid = (string) $row['uuid'];
-            $ctx->isUniqVisitor = false;
-            return false;
-        }
+            $row = $db->fetchOne(
+                <<<SQL
+                    SELECT visitor_uuid::text AS uuid
+                    FROM stats.visitors_fingerprints
+                    WHERE fp_hash = decode(:h, 'hex')
+                      AND created_at > now() - interval '24 hours'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                SQL,
+                ['h' => $fpHash],
+            );
 
-        $ctx->visitorUuid = Uuid::uuid7()->toString();
-        $ctx->isUniqVisitor = true;
+            if ($row !== null && isset($row['uuid'])) {
+                $ctx->visitorUuid = (string) $row['uuid'];
+                $ctx->isUniqVisitor = false;
+                return false;
+            }
 
-        $this->db->execute(
-            "INSERT INTO stats.visitors_fingerprints (fp_hash, visitor_uuid) VALUES (decode(:h, 'hex'), :uuid)",
-            ['h' => $fpHash, 'uuid' => $ctx->visitorUuid],
-        );
+            $ctx->visitorUuid = Uuid::uuid7()->toString();
+            $ctx->isUniqVisitor = true;
 
-        return true;
+            $db->execute(
+                "INSERT INTO stats.visitors_fingerprints (fp_hash, visitor_uuid) VALUES (decode(:h, 'hex'), :uuid)",
+                ['h' => $fpHash, 'uuid' => $ctx->visitorUuid],
+            );
+
+            return true;
+        });
     }
 
     public function attachCookie(ResponseInterface $response, string $uuid, bool $secure = true): ResponseInterface
