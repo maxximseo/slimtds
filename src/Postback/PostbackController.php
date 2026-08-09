@@ -228,7 +228,7 @@ final class PostbackController
 
         // Check whether a conversion already exists for this click_id
         $existing = (int)$this->db->fetchScalar(
-            'SELECT count(*) FROM core.conversions WHERE click_id = :cid',
+            "SELECT count(*) FROM core.conversions WHERE click_id = :cid AND source = 'slimtds'",
             ['cid' => $subid],
         );
         $updated = $existing > 0;
@@ -240,7 +240,7 @@ final class PostbackController
                     (click_id, campaign_id, offer_id, payout, status, external_id, currency, source_ip, raw_query)
                 VALUES
                     (:click_id, :campaign_id, :offer_id, :payout, :status, :external_id, :currency, :source_ip, :raw_query)
-                ON CONFLICT (click_id)
+                ON CONFLICT (click_id) WHERE source = 'slimtds'
                 DO UPDATE SET
                     payout      = EXCLUDED.payout,
                     status      = EXCLUDED.status,

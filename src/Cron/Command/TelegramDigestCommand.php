@@ -123,21 +123,23 @@ final class TelegramDigestCommand extends Command
 
         if ($offerRows !== []) {
             usort($offerRows, static fn ($a, $b) =>
-                $b['search_epc'] <=> $a['search_epc']
+                $b['all_epc'] <=> $a['all_epc']
                 ?: $b['approved'] <=> $a['approved']
             );
             $offerCount = count($offerRows);
             $offerRows = array_slice($offerRows, 0, 10);
 
             $lines[] = '';
-            $lines[] = '<b>30d search EPC by actual offer (offers with leads):</b>';
+            $lines[] = '<b>30d EPC by actual offer (offers with leads):</b>';
             foreach ($offerRows as $i => $row) {
                 $lines[] = sprintf(
-                    '%d. <b>%s</b> — %d conv (%d search) · %d uniq search clicks · EPC <b>$%s</b>',
+                    '%d. <b>%s</b> — %d conv (%d search) · %d uniq all · EPC all <b>$%s</b> · %d uniq search · EPC search <b>$%s</b>',
                     $i + 1,
                     $row['offer_name'],
                     $row['conversions'],
                     $row['search_conversions'],
+                    $row['all_clicks'],
+                    number_format($row['all_epc'], 4),
                     $row['search_clicks'],
                     number_format($row['search_epc'], 4),
                 );
