@@ -46,6 +46,8 @@ final class TelegramDigestCommand extends Command
         // never render as "Conv: 0 · $0.00" in the daily digest.
         $totals = $this->stats->searchSummary(null, $since);
         $convs  = $this->stats->digestConversions(null, $since);
+        $week   = $this->stats->searchSummary(null, date('Y-m-d\TH:i:sP', strtotime('-7 days')));
+        $month  = $this->stats->searchSummary(null, date('Y-m-d\TH:i:sP', strtotime('-30 days')));
 
         $lines = [
             sprintf(
@@ -68,6 +70,16 @@ final class TelegramDigestCommand extends Command
                 number_format((float)$totals['payout'], 2),
                 $totals['cr'],
                 number_format($totals['epc'], 4),
+            ),
+            sprintf(
+                '7d Search: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
+                $week['clicks'],
+                number_format($week['epc'], 4),
+            ),
+            sprintf(
+                '30d Search: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
+                $month['clicks'],
+                number_format($month['epc'], 4),
             ),
         ];
 
