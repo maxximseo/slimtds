@@ -27,8 +27,8 @@
 # Refresh stats matview every 5 minutes
 */5 * * * * /usr/local/bin/php /app/bin/console stats:refresh
 
-# Daily Telegram digest at 10:00 UTC
-0 10 * * * /usr/local/bin/php /app/bin/console telegram:digest
+# Daily Telegram digest at 07:00 Europe/Moscow (04:00 UTC)
+0 4 * * * /usr/local/bin/php /app/bin/console telegram:digest
 
 # Hourly system alerts
 0 * * * * /usr/local/bin/php /app/bin/console telegram:alerts
