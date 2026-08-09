@@ -1,3 +1,8 @@
 # Landing/docs live in the slimtds-site submodule mounted at site/ on the demo
 # VPS only. Exclude it so prod images (vendor stage COPY . ./) never ship it.
 site/
+
+# Backups are runtime data and may contain production PII/secrets. The host
+# volume is mounted at this path after startup; never bake its contents in.
+var/backups/*
+!var/backups/.gitkeep
