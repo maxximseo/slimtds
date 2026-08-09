@@ -120,10 +120,14 @@ test('digest offer EPC uses the actual routed offer instead of the campaign name
     $byName = array_column($rows, null, 'offer_name');
 
     expect($byName['Babu88 Cross Brand']['conversions'])->toBe(1)
+        ->and($byName['Babu88 Cross Brand']['all_clicks'])->toBe(1)
+        ->and($byName['Babu88 Cross Brand']['all_epc'])->toBe(15.0)
         ->and($byName['Babu88 Cross Brand']['search_conversions'])->toBe(0)
         ->and($byName['Babu88 Cross Brand']['search_clicks'])->toBe(0)
         ->and($byName['Babu88 Cross Brand']['search_epc'])->toBe(0.0)
         ->and($byName['Glory Actual']['conversions'])->toBe(1)
+        ->and($byName['Glory Actual']['all_clicks'])->toBe(2)
+        ->and($byName['Glory Actual']['all_epc'])->toBe(10.0)
         ->and($byName['Glory Actual']['search_conversions'])->toBe(1)
         ->and($byName['Glory Actual']['search_clicks'])->toBe(2)
         ->and($byName['Glory Actual']['search_epc'])->toBe(10.0);
