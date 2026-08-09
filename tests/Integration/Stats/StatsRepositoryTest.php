@@ -31,6 +31,12 @@ test('search stats count each visitor once and exclude direct traffic and bots',
             (:campaign, '00000000-0000-7000-8000-000000000014', '1.1.1.4', 'https://lander.test/page', false, now())",
         ['campaign' => $campaign, 'pixel_visitor' => $pixelVisitor],
     );
+    $this->db->execute(
+        "INSERT INTO core.conversions (click_id, campaign_id, payout, status, currency, created_at)
+         SELECT id, :campaign, '15.00', 'approved', 'USD', now()
+         FROM stats.clicks WHERE visitor_uuid = :pixel_visitor LIMIT 1",
+        ['campaign' => $campaign, 'pixel_visitor' => $pixelVisitor],
+    );
 
     $summary = $this->repo->searchSummary($campaign, date('c', time() - 10800));
     $timeline = $this->repo->searchClicksTimeline($campaign, date('c', time() - 10800));
@@ -38,6 +44,10 @@ test('search stats count each visitor once and exclude direct traffic and bots',
     expect($summary['clicks'])->toBe(2)
         ->and($summary['uniq'])->toBe(2)
         ->and($summary['bots'])->toBe(0)
+        ->and($summary['conversions'])->toBe(1)
+        ->and($summary['approved'])->toBe(1)
+        ->and((float)$summary['payout'])->toBe(15.0)
+        ->and($summary['epc'])->toBe(7.5)
         ->and(array_sum(array_column($timeline, 'clicks')))->toBe(2)
         ->and(array_sum(array_column($timeline, 'uniq')))->toBe(2);
 });
