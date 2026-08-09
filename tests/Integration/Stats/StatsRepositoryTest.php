@@ -86,3 +86,45 @@ test('digest conversions count all sources, exclude bot clicks, include click-le
     expect($search['conversions'])->toBe(0)
         ->and((float)$search['payout'])->toBe(0.0);
 });
+
+test('digest offer EPC uses the actual routed offer instead of the campaign name', function (): void {
+    $campaign = '00000000-0000-7000-8000-000000000010';
+    $directOffer = '00000000-0000-7000-8000-0000000000a1';
+    $searchOffer = '00000000-0000-7000-8000-0000000000a2';
+
+    $this->db->execute(
+        "INSERT INTO core.offers (id, name, url, is_active)
+         VALUES
+            (:direct_offer, 'Babu88 Cross Brand', 'https://direct.example/?subid={click_id}', true),
+            (:search_offer, 'Glory Actual', 'https://search.example/?subid={click_id}', true)
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, url = EXCLUDED.url, is_active = true",
+        ['direct_offer' => $directOffer, 'search_offer' => $searchOffer],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.clicks (id, campaign_id, offer_id, visitor_uuid, ip, referer, is_bot, created_at)
+         VALUES
+            ('00000000-0000-7000-8000-0000000000d1', :campaign, :direct_offer, '00000000-0000-7000-8000-000000000031', '1.1.1.1', 'https://lander.test/', false, now()),
+            ('00000000-0000-7000-8000-0000000000d2', :campaign, :search_offer, '00000000-0000-7000-8000-000000000032', '1.1.1.2', 'https://www.google.com/search?q=casino', false, now()),
+            ('00000000-0000-7000-8000-0000000000d3', :campaign, :search_offer, '00000000-0000-7000-8000-000000000033', '1.1.1.3', 'https://www.google.com/search?q=casino', false, now())",
+        ['campaign' => $campaign, 'direct_offer' => $directOffer, 'search_offer' => $searchOffer],
+    );
+    $this->db->execute(
+        "INSERT INTO core.conversions (click_id, campaign_id, offer_id, payout, status, currency, created_at)
+         VALUES
+            ('00000000-0000-7000-8000-0000000000d1', :campaign, :direct_offer, '15.00', 'approved', 'USD', now()),
+            ('00000000-0000-7000-8000-0000000000d2', :campaign, :search_offer, '20.00', 'approved', 'USD', now())",
+        ['campaign' => $campaign, 'direct_offer' => $directOffer, 'search_offer' => $searchOffer],
+    );
+
+    $rows = $this->repo->digestOfferEpc(date('c', time() - 10800));
+    $byName = array_column($rows, null, 'offer_name');
+
+    expect($byName['Babu88 Cross Brand']['conversions'])->toBe(1)
+        ->and($byName['Babu88 Cross Brand']['search_conversions'])->toBe(0)
+        ->and($byName['Babu88 Cross Brand']['search_clicks'])->toBe(0)
+        ->and($byName['Babu88 Cross Brand']['search_epc'])->toBe(0.0)
+        ->and($byName['Glory Actual']['conversions'])->toBe(1)
+        ->and($byName['Glory Actual']['search_conversions'])->toBe(1)
+        ->and($byName['Glory Actual']['search_clicks'])->toBe(2)
+        ->and($byName['Glory Actual']['search_epc'])->toBe(10.0);
+});
