@@ -174,6 +174,74 @@ final class StatsRepository
     }
 
     /**
+     * 30-day digest rows grouped by the offer that actually received the click.
+     *
+     * @return list<array{offer_name:string, conversions:int, approved:int, search_conversions:int, search_clicks:int, search_epc:float}>
+     */
+    public function digestOfferEpc(string $sinceIso): array
+    {
+        [$refWhere, $refParams] = SearchEngine::sqlFilterCompact(
+            'any',
+            SearchEngine::clickEntryRefererSql('c'),
+            'offer_search',
+        );
+
+        $rows = $this->db->fetchAll(
+            "WITH lead_offers AS (
+                 SELECT COALESCE(cv.offer_id, linked_click.offer_id) AS offer_id,
+                        count(cv.id)::int AS conversions,
+                        count(cv.id) FILTER (WHERE cv.status = 'approved')::int AS approved
+                 FROM core.conversions cv
+                 LEFT JOIN stats.clicks linked_click ON linked_click.id = cv.click_id
+                 WHERE cv.created_at >= :since
+                   AND (linked_click.id IS NULL OR linked_click.is_bot = false)
+                 GROUP BY COALESCE(cv.offer_id, linked_click.offer_id)
+             ), search_clicks AS (
+                 SELECT c.offer_id,
+                        count(DISTINCT c.visitor_uuid)::int AS clicks
+                 FROM stats.clicks c
+                 WHERE c.created_at >= :since
+                   AND c.is_bot = false
+                   AND {$refWhere}
+                 GROUP BY c.offer_id
+             ), search_conversions AS (
+                 SELECT COALESCE(cv.offer_id, c.offer_id) AS offer_id,
+                        count(cv.id)::int AS conversions,
+                        COALESCE(sum(cv.payout) FILTER (WHERE cv.status = 'approved'), 0)::numeric AS payout
+                 FROM core.conversions cv
+                 JOIN stats.clicks c ON c.id = cv.click_id
+                 WHERE cv.created_at >= :since
+                   AND c.is_bot = false
+                   AND {$refWhere}
+                 GROUP BY COALESCE(cv.offer_id, c.offer_id)
+             )
+             SELECT COALESCE(o.name, 'Offer unknown') AS offer_name,
+                    lo.conversions,
+                    lo.approved,
+                    COALESCE(scv.conversions, 0)::int AS search_conversions,
+                    COALESCE(sc.clicks, 0)::int AS search_clicks,
+                    CASE WHEN COALESCE(sc.clicks, 0) > 0
+                         THEN round(COALESCE(scv.payout, 0) / sc.clicks, 4)
+                         ELSE 0
+                    END::float AS search_epc
+             FROM lead_offers lo
+             LEFT JOIN core.offers o ON o.id = lo.offer_id
+             LEFT JOIN search_clicks sc ON sc.offer_id IS NOT DISTINCT FROM lo.offer_id
+             LEFT JOIN search_conversions scv ON scv.offer_id IS NOT DISTINCT FROM lo.offer_id",
+            ['since' => $sinceIso] + $refParams,
+        );
+
+        return array_map(static fn ($row) => [
+            'offer_name'        => (string)$row['offer_name'],
+            'conversions'       => (int)$row['conversions'],
+            'approved'          => (int)$row['approved'],
+            'search_conversions' => (int)$row['search_conversions'],
+            'search_clicks'     => (int)$row['search_clicks'],
+            'search_epc'        => (float)$row['search_epc'],
+        ], $rows);
+    }
+
+    /**
      * @return list<array{hour:string, clicks:int, uniq:int, bot:int}>
      */
     public function searchClicksTimeline(?string $campaignId, string $sinceIso): array

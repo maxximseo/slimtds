@@ -87,7 +87,7 @@ final class TelegramDigestCommand extends Command
         // Top 10 campaigns by unique search visitors
         $allCampaigns = $this->campaigns->page(1, 200);
         $rows = [];
-        $companyRows = [];
+        $offerRows = $this->stats->digestOfferEpc($monthSince);
 
         foreach ($allCampaigns as $campaign) {
             $s  = $this->stats->searchSummary($campaign->id, $since);
@@ -96,16 +96,6 @@ final class TelegramDigestCommand extends Command
             // belongs in the list — money events must stay visible.
             if ($s['clicks'] > 0 || $cv['conversions'] > 0) {
                 $rows[] = ['campaign' => $campaign, 'stats' => $s, 'convs' => $cv];
-            }
-
-            $monthSearch = $this->stats->searchSummary($campaign->id, $monthSince);
-            $monthConvs = $this->stats->digestConversions($campaign->id, $monthSince);
-            if ($monthConvs['conversions'] > 0) {
-                $companyRows[] = [
-                    'campaign' => $campaign,
-                    'search' => $monthSearch,
-                    'convs' => $monthConvs,
-                ];
             }
         }
 
@@ -131,29 +121,29 @@ final class TelegramDigestCommand extends Command
             }
         }
 
-        if ($companyRows !== []) {
-            usort($companyRows, static fn ($a, $b) =>
-                $b['search']['epc'] <=> $a['search']['epc']
-                ?: $b['convs']['approved'] <=> $a['convs']['approved']
+        if ($offerRows !== []) {
+            usort($offerRows, static fn ($a, $b) =>
+                $b['search_epc'] <=> $a['search_epc']
+                ?: $b['approved'] <=> $a['approved']
             );
-            $companyCount = count($companyRows);
-            $companyRows = array_slice($companyRows, 0, 10);
+            $offerCount = count($offerRows);
+            $offerRows = array_slice($offerRows, 0, 10);
 
             $lines[] = '';
-            $lines[] = '<b>30d search EPC by campaign (campaigns with leads):</b>';
-            foreach ($companyRows as $i => $row) {
+            $lines[] = '<b>30d search EPC by actual offer (offers with leads):</b>';
+            foreach ($offerRows as $i => $row) {
                 $lines[] = sprintf(
                     '%d. <b>%s</b> — %d conv (%d search) · %d uniq search clicks · EPC <b>$%s</b>',
                     $i + 1,
-                    $row['campaign']->name,
-                    $row['convs']['conversions'],
-                    $row['search']['conversions'],
-                    $row['search']['clicks'],
-                    number_format($row['search']['epc'], 4),
+                    $row['offer_name'],
+                    $row['conversions'],
+                    $row['search_conversions'],
+                    $row['search_clicks'],
+                    number_format($row['search_epc'], 4),
                 );
             }
-            if ($companyCount > 10) {
-                $lines[] = sprintf('+%d more campaigns with leads', $companyCount - 10);
+            if ($offerCount > 10) {
+                $lines[] = sprintf('+%d more offers with leads', $offerCount - 10);
             }
         }
 
