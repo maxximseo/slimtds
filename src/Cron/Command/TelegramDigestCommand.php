@@ -40,6 +40,7 @@ final class TelegramDigestCommand extends Command
         }
 
         $since = date('Y-m-d\TH:i:sP', strtotime('-24 hours'));
+        $monthSince = date('Y-m-d\TH:i:sP', strtotime('-30 days'));
 
         // Top-line summary: search/AI visitors, but conversions across ALL
         // sources — a deposit from direct traffic is still money and must
@@ -47,7 +48,7 @@ final class TelegramDigestCommand extends Command
         $totals = $this->stats->searchSummary(null, $since);
         $convs  = $this->stats->digestConversions(null, $since);
         $week   = $this->stats->searchSummary(null, date('Y-m-d\TH:i:sP', strtotime('-7 days')));
-        $month  = $this->stats->searchSummary(null, date('Y-m-d\TH:i:sP', strtotime('-30 days')));
+        $month  = $this->stats->searchSummary(null, $monthSince);
 
         $lines = [
             sprintf(
@@ -86,6 +87,7 @@ final class TelegramDigestCommand extends Command
         // Top 10 campaigns by unique search visitors
         $allCampaigns = $this->campaigns->page(1, 200);
         $rows = [];
+        $companyRows = [];
 
         foreach ($allCampaigns as $campaign) {
             $s  = $this->stats->searchSummary($campaign->id, $since);
@@ -94,6 +96,16 @@ final class TelegramDigestCommand extends Command
             // belongs in the list — money events must stay visible.
             if ($s['clicks'] > 0 || $cv['conversions'] > 0) {
                 $rows[] = ['campaign' => $campaign, 'stats' => $s, 'convs' => $cv];
+            }
+
+            $monthSearch = $this->stats->searchSummary($campaign->id, $monthSince);
+            $monthConvs = $this->stats->digestConversions($campaign->id, $monthSince);
+            if ($monthConvs['conversions'] > 0) {
+                $companyRows[] = [
+                    'campaign' => $campaign,
+                    'search' => $monthSearch,
+                    'convs' => $monthConvs,
+                ];
             }
         }
 
@@ -116,6 +128,32 @@ final class TelegramDigestCommand extends Command
                     $cv['approved'],
                     number_format((float)$cv['payout'], 2),
                 );
+            }
+        }
+
+        if ($companyRows !== []) {
+            usort($companyRows, static fn ($a, $b) =>
+                $b['search']['epc'] <=> $a['search']['epc']
+                ?: $b['convs']['approved'] <=> $a['convs']['approved']
+            );
+            $companyCount = count($companyRows);
+            $companyRows = array_slice($companyRows, 0, 10);
+
+            $lines[] = '';
+            $lines[] = '<b>30d search EPC by campaign (campaigns with leads):</b>';
+            foreach ($companyRows as $i => $row) {
+                $lines[] = sprintf(
+                    '%d. <b>%s</b> — %d conv (%d search) · %d uniq search clicks · EPC <b>$%s</b>',
+                    $i + 1,
+                    $row['campaign']->name,
+                    $row['convs']['conversions'],
+                    $row['search']['conversions'],
+                    $row['search']['clicks'],
+                    number_format($row['search']['epc'], 4),
+                );
+            }
+            if ($companyCount > 10) {
+                $lines[] = sprintf('+%d more campaigns with leads', $companyCount - 10);
             }
         }
 
