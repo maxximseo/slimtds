@@ -28,6 +28,8 @@ test('Storage Box scripts encrypt uploads and perform a disposable full restore'
         ->toContain('SLIMTDS_STORAGEBOX_KEEP')
         ->and($restoreContent)->toContain('sha256sum -c')
         ->toContain('postgres:18-alpine')
+        ->toContain("-Atqc 'SELECT 1'")
+        ->not->toContain('docker exec "$CONTAINER_NAME" pg_isready')
         ->toContain('pg_restore')
         ->toContain('SELECT count(*) FROM core.campaigns')
         ->toContain('SELECT count(*) FROM stats.clicks')
