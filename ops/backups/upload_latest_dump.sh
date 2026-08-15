@@ -10,6 +10,7 @@ GPG_HOMEDIR="${SLIMTDS_GPG_HOMEDIR:-/root/.gnupg-slimtds-backup}"
 SSH_KEY="${HETZNER_STORAGEBOX_SSH_KEY_PATH:-/root/.ssh/storagebox_affscale}"
 SSH_PORT="${HETZNER_STORAGEBOX_PORT:-23}"
 KNOWN_HOSTS="${HETZNER_STORAGEBOX_KNOWN_HOSTS:-/root/.ssh/known_hosts}"
+PG_RESTORE_CONTAINER="${SLIMTDS_PG_RESTORE_CONTAINER:-slimtds-cron-1}"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
@@ -28,10 +29,13 @@ die() {
 [[ -d "$GPG_HOMEDIR" ]] || die "GPG home not found: $GPG_HOMEDIR"
 [[ "$REMOTE_PATH" =~ ^[A-Za-z0-9._/-]+$ ]] || die 'Unsafe Storage Box remote path'
 [[ "$REMOTE_KEEP" =~ ^[0-9]+$ ]] && (( REMOTE_KEEP >= 2 )) || die 'SLIMTDS_STORAGEBOX_KEEP must be at least 2'
+[[ "$PG_RESTORE_CONTAINER" =~ ^[A-Za-z0-9_.-]+$ ]] || die 'Unsafe PostgreSQL restore container name'
 
-for command_name in find flock gpg pg_restore rsync sftp sha256sum; do
+for command_name in docker find flock gpg rsync sftp sha256sum; do
   command -v "$command_name" >/dev/null || die "Required command is missing: $command_name"
 done
+[[ "$(docker inspect -f '{{.State.Running}}' "$PG_RESTORE_CONTAINER" 2>/dev/null || true)" = true ]] \
+  || die "PostgreSQL restore container is not running: $PG_RESTORE_CONTAINER"
 gpg --homedir "$GPG_HOMEDIR" --batch --list-keys "$SLIMTDS_GPG_RECIPIENT" >/dev/null 2>&1 \
   || die 'Configured GPG recipient public key is unavailable'
 
@@ -43,7 +47,7 @@ LATEST_DUMP="$({
 } | sort -nr | head -n 1 | cut -d' ' -f2-)"
 [[ -n "$LATEST_DUMP" && -f "$LATEST_DUMP" ]] || die 'No fresh slimTDS dump found (maximum age: 36 hours)'
 
-pg_restore --list "$LATEST_DUMP" >/dev/null
+docker exec -i "$PG_RESTORE_CONTAINER" pg_restore --list < "$LATEST_DUMP" >/dev/null
 
 TMP_DIR="$(mktemp -d /var/tmp/slimtds-storagebox-backup.XXXXXX)"
 cleanup() {
@@ -101,7 +105,8 @@ log "Uploading encrypted dump to Storage Box"
 sftp "${SFTP_OPTS[@]}" -b "$SFTP_BATCH" "$REMOTE" >/dev/null
 
 LOCAL_SIZE="$(stat -c %s "$ENCRYPTED_PATH")"
-REMOTE_SIZE="$(rsync --list-only -e "$SSH_CMD" "$REMOTE:$REMOTE_PATH/$ENCRYPTED_NAME" 2>/dev/null | awk 'NF >= 5 {print $2; exit}')"
+REMOTE_SIZE="$(rsync --list-only --no-human-readable -e "$SSH_CMD" \
+  "$REMOTE:$REMOTE_PATH/$ENCRYPTED_NAME" 2>/dev/null | awk 'NF >= 5 {print $2; exit}')"
 [[ "$REMOTE_SIZE" = "$LOCAL_SIZE" ]] || die "Remote size mismatch for $ENCRYPTED_NAME"
 
 CHECKSUM_DIFF="$(rsync -cni --out-format='%i %n' -e "$SSH_CMD" \
