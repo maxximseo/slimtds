@@ -1,0 +1,14 @@
+[Unit]
+Description=Verify latest encrypted slimTDS Storage Box backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/slimtds-storagebox-backup.env
+ExecStart=/usr/local/sbin/slimtds-storagebox-restore-test
+TimeoutStartSec=60min
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

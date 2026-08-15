@@ -43,7 +43,8 @@ return static function (): \DI\Container {
             ->constructorParameter('pdo', \DI\get(PDO::class)),
         \App\Shared\Session\PgSessionHandler::class => static function (\App\Shared\Db\Connection $db): \App\Shared\Session\PgSessionHandler {
             $lifetime = (int)($_ENV['SESSION_LIFETIME'] ?? 1_209_600);
-            return new \App\Shared\Session\PgSessionHandler($db, $lifetime);
+            $anonymousLifetime = (int)($_ENV['SESSION_ANONYMOUS_LIFETIME'] ?? 3_600);
+            return new \App\Shared\Session\PgSessionHandler($db, $lifetime, $anonymousLifetime);
         },
         \App\Shared\Asset\Manifest::class => static function (): \App\Shared\Asset\Manifest {
             return new \App\Shared\Asset\Manifest(dirname(__DIR__) . '/public/assets/manifest.json');

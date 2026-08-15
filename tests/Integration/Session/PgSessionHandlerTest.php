@@ -14,7 +14,13 @@ beforeEach(function (): void {
     );
     $pdo->exec('DELETE FROM core.sessions');
     $this->db = new Connection($pdo);
-    $this->handler = new PgSessionHandler($this->db, 3600);
+    $this->handler = new PgSessionHandler($this->db, 3600, 300);
+});
+
+afterEach(function (): void {
+    $this->db->execute(
+        "DELETE FROM core.admins WHERE login = 'session-handler-owner-test'",
+    );
 });
 
 test('write then read returns same data', function (): void {
@@ -70,4 +76,39 @@ test('validateId returns true for active and false for unknown', function (): vo
 test('create_sid returns 64 hex chars', function (): void {
     $sid = $this->handler->create_sid();
     expect($sid)->toMatch('/^[0-9a-f]{64}$/');
+});
+
+test('anonymous and authenticated sessions use separate lifetimes and ownership', function (): void {
+    $anonymousId = bin2hex(random_bytes(16));
+    $authenticatedId = bin2hex(random_bytes(16));
+    $adminId = (int)$this->db->fetchScalar(
+        <<<'SQL'
+            INSERT INTO core.admins (login, password_hash)
+            VALUES ('session-handler-owner-test', 'test-only-hash')
+            ON CONFLICT (login) DO UPDATE SET updated_at = now()
+            RETURNING id
+        SQL,
+    );
+
+    $this->handler->write($anonymousId, 'csrf_token|s:4:"test";');
+    $this->handler->setAdminId($adminId);
+    $this->handler->write($authenticatedId, 'admin_id|i:' . $adminId . ';');
+
+    $anonymous = $this->db->fetchOne(
+        'SELECT admin_id, extract(epoch FROM expires_at - now())::int AS ttl FROM core.sessions WHERE id = :id',
+        ['id' => $anonymousId],
+    );
+    $authenticated = $this->db->fetchOne(
+        'SELECT admin_id, extract(epoch FROM expires_at - now())::int AS ttl FROM core.sessions WHERE id = :id',
+        ['id' => $authenticatedId],
+    );
+
+    expect($anonymous)->not->toBeNull()
+        ->and($anonymous['admin_id'])->toBeNull()
+        ->and((int)$anonymous['ttl'])->toBeGreaterThanOrEqual(295)
+        ->and((int)$anonymous['ttl'])->toBeLessThanOrEqual(300)
+        ->and($authenticated)->not->toBeNull()
+        ->and((int)$authenticated['admin_id'])->toBe($adminId)
+        ->and((int)$authenticated['ttl'])->toBeGreaterThanOrEqual(3595)
+        ->and((int)$authenticated['ttl'])->toBeLessThanOrEqual(3600);
 });

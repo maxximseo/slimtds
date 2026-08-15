@@ -12,6 +12,9 @@
 # Clean up expired rate_limits buckets (weekly, Sunday 03:00 UTC)
 0 3 * * 0 /usr/local/bin/php /app/bin/console rate_limits:cleanup
 
+# Remove expired anonymous/admin sessions hourly.
+15 * * * * /usr/local/bin/php /app/bin/console sessions:cleanup
+
 # Update bot IP list daily at 05:00 UTC
 0 5 * * * /usr/local/bin/php /app/bin/console bots:update
 
@@ -49,7 +52,6 @@
 # 55s inner-loop pattern as inbox:flush.
 * * * * * /usr/local/bin/php /app/bin/console rrweb:flush
 
-# Demo-only: full reset to baseline every 4 hours. On non-demo hosts demo:reset
-# exits non-zero (DEMO_MODE!=1) and `|| true` swallows it, so supercronic logs no
-# failure; on the demo VPS (DEMO_MODE=1) it performs the reset.
-0 */4 * * * /usr/local/bin/php /app/bin/console demo:reset || true
+# Demo-only: full reset to baseline every 4 hours. The shell guard avoids
+# invoking/journaling the destructive command at all on production hosts.
+0 */4 * * * if [ "${DEMO_MODE:-0}" = "1" ]; then /usr/local/bin/php /app/bin/console demo:reset; fi

@@ -1,0 +1,15 @@
+[Unit]
+Description=Upload encrypted slimTDS database backup to Storage Box
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/slimtds-storagebox-backup.env
+ExecStart=/opt/slimtds/ops/backups/upload_latest_dump.sh
+TimeoutStartSec=45min
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

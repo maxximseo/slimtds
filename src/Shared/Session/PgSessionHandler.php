@@ -11,10 +11,18 @@ use SessionUpdateTimestampHandlerInterface;
 
 final class PgSessionHandler implements SessionHandlerInterface, SessionIdInterface, SessionUpdateTimestampHandlerInterface
 {
+    private ?int $adminId = null;
+
     public function __construct(
         private readonly Connection $db,
         private readonly int $lifetimeSeconds = 1_209_600, // 14 days default
+        private readonly int $anonymousLifetimeSeconds = 3_600,
     ) {}
+
+    public function setAdminId(?int $adminId): void
+    {
+        $this->adminId = $adminId;
+    }
 
     public function open(string $path, string $name): bool
     {
@@ -44,17 +52,26 @@ final class PgSessionHandler implements SessionHandlerInterface, SessionIdInterf
 
     public function write(string $id, string $data): bool
     {
-        $expiresAt = date('c', time() + $this->lifetimeSeconds);
+        $lifetime = $this->adminId === null
+            ? $this->anonymousLifetimeSeconds
+            : $this->lifetimeSeconds;
+        $expiresAt = date('c', time() + $lifetime);
         $this->db->execute(
             <<<'SQL'
-                INSERT INTO core.sessions (id, data, expires_at, updated_at)
-                VALUES (:id, :data, :expires_at, now())
+                INSERT INTO core.sessions (id, admin_id, data, expires_at, updated_at)
+                VALUES (:id, :admin_id, :data, :expires_at, now())
                 ON CONFLICT (id) DO UPDATE
-                SET data = EXCLUDED.data,
+                SET admin_id = EXCLUDED.admin_id,
+                    data = EXCLUDED.data,
                     expires_at = EXCLUDED.expires_at,
                     updated_at = now()
             SQL,
-            ['id' => $id, 'data' => $data, 'expires_at' => $expiresAt],
+            [
+                'id' => $id,
+                'admin_id' => $this->adminId,
+                'data' => $data,
+                'expires_at' => $expiresAt,
+            ],
         );
         return true;
     }
