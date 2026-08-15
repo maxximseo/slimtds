@@ -20,6 +20,9 @@ final class SessionMiddleware implements MiddlewareInterface
             session_write_close();
         }
 
+        // FrankenPHP reuses this handler across requests. Reset request-scoped
+        // authentication state before PHP reads or writes a new session.
+        $this->handler->setAdminId(null);
         session_set_save_handler($this->handler, true);
 
         $name = $_ENV['SESSION_NAME'] ?? 'slimtds_sess';
@@ -41,6 +44,7 @@ final class SessionMiddleware implements MiddlewareInterface
         }
 
         session_start();
+        $this->handler->setAdminId($this->currentAdminId());
 
         // Snapshot and clear _old once per request so the bag from a failed
         // form submission can't leak into a different form on a later page
@@ -53,7 +57,15 @@ final class SessionMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         } finally {
             unset($GLOBALS['__old_bag__']);
+            $this->handler->setAdminId($this->currentAdminId());
             session_write_close();
+            $this->handler->setAdminId(null);
         }
+    }
+
+    private function currentAdminId(): ?int
+    {
+        $adminId = $_SESSION['admin_id'] ?? null;
+        return is_int($adminId) ? $adminId : null;
     }
 }

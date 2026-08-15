@@ -1,0 +1,10 @@
+[Unit]
+Description=Verify slimTDS Storage Box backup weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

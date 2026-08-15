@@ -25,4 +25,6 @@ test('crontab references existing bin/console commands', function (): void {
     $content = file_get_contents($path);
     expect($content)->toContain('partitions:rotate');
     expect($content)->toContain('rate_limits:cleanup');
+    expect($content)->toContain('sessions:cleanup');
+    expect($content)->toContain('if [ "${DEMO_MODE:-0}" = "1" ]');
 });
