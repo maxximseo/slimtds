@@ -87,9 +87,10 @@ docker exec "$CONTAINER_NAME" pg_restore \
 
 CAMPAIGNS="$(docker exec "$CONTAINER_NAME" psql -U postgres -d slimtds_restore_test -Atqc \
   'SELECT count(*) FROM core.campaigns')"
-CLICKS_TABLE="$(docker exec "$CONTAINER_NAME" psql -U postgres -d slimtds_restore_test -Atqc \
-  "SELECT to_regclass('stats.clicks') IS NOT NULL")"
+CLICKS="$(docker exec "$CONTAINER_NAME" psql -U postgres -d slimtds_restore_test -Atqc \
+  'SELECT count(*) FROM stats.clicks')"
 [[ "$CAMPAIGNS" =~ ^[1-9][0-9]*$ ]] || die 'Restored database has no campaigns'
-[[ "$CLICKS_TABLE" = 't' ]] || die 'Restored database is missing stats.clicks'
+[[ "$CLICKS" =~ ^[1-9][0-9]*$ ]] || die 'Restored database has no clicks'
 
-printf 'restore verification ok: %s (campaigns=%s, stats.clicks=yes)\n' "$LATEST_NAME" "$CAMPAIGNS"
+printf 'restore verification ok: %s (campaigns=%s, clicks=%s)\n' \
+  "$LATEST_NAME" "$CAMPAIGNS" "$CLICKS"

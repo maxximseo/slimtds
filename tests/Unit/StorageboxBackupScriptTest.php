@@ -29,7 +29,9 @@ test('Storage Box scripts encrypt uploads and perform a disposable full restore'
         ->and($restoreContent)->toContain('sha256sum -c')
         ->toContain('postgres:18-alpine')
         ->toContain('pg_restore')
-        ->toContain('SELECT count(*) FROM core.campaigns');
+        ->toContain('SELECT count(*) FROM core.campaigns')
+        ->toContain('SELECT count(*) FROM stats.clicks')
+        ->toContain('Restored database has no clicks');
 });
 
 test('Storage Box systemd units run tracked encrypted upload and weekly restore checks', function (): void {
