@@ -73,7 +73,10 @@ docker run -d --rm --name "$CONTAINER_NAME" \
 
 ready=0
 for _ in $(seq 1 60); do
-  if docker exec "$CONTAINER_NAME" pg_isready -U postgres -d slimtds_restore_test >/dev/null 2>&1; then
+  # pg_isready only proves that PostgreSQL accepts connections; during
+  # container initialization it can succeed before POSTGRES_DB exists.
+  if docker exec "$CONTAINER_NAME" psql -U postgres -d slimtds_restore_test \
+    -Atqc 'SELECT 1' >/dev/null 2>&1; then
     ready=1
     break
   fi
