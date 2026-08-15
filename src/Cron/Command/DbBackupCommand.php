@@ -18,9 +18,17 @@ final class DbBackupCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        // Keep dumps private even when the command is invoked manually outside
+        // the cron container's UMask setting.
+        umask(0o077);
+
         $dir = self::BACKUPS_DIR;
-        if (!is_dir($dir) && !mkdir($dir, 0o755, true)) {
+        if (!is_dir($dir) && !mkdir($dir, 0o700, true)) {
             $output->writeln("<error>Cannot create backups directory: {$dir}</error>");
+            return self::FAILURE;
+        }
+        if (!chmod($dir, 0o700)) {
+            $output->writeln("<error>Cannot secure backups directory: {$dir}</error>");
             return self::FAILURE;
         }
 
@@ -52,6 +60,12 @@ final class DbBackupCommand extends Command
             if (file_exists($dumpFile)) {
                 unlink($dumpFile);
             }
+            return self::FAILURE;
+        }
+
+        if (!chmod($dumpFile, 0o600)) {
+            unlink($dumpFile);
+            $output->writeln('<error>Cannot secure backup file; insecure dump removed</error>');
             return self::FAILURE;
         }
 
