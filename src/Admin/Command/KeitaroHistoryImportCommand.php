@@ -6,6 +6,7 @@ namespace App\Admin\Command;
 
 use App\Shared\Db\Connection;
 use App\Shared\Db\Partitions;
+use App\Shared\KeitaroHistoryId;
 use DateTimeImmutable;
 use Ramsey\Uuid\Uuid;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -18,8 +19,6 @@ use Symfony\Component\Console\Output\OutputInterface;
 #[AsCommand(name: 'keitaro:import-history', description: 'Validate and import a source-marked Keitaro NDJSON history export')]
 final class KeitaroHistoryImportCommand extends Command
 {
-    private const UUID_NAMESPACE = '35b46d77-9bf0-4a86-97f8-d636139fca64';
-
     public function __construct(
         private readonly Connection $db,
         private readonly Partitions $partitions,
@@ -411,7 +410,7 @@ final class KeitaroHistoryImportCommand extends Command
 
     private function uuid(string $name): string
     {
-        return Uuid::uuid5(self::UUID_NAMESPACE, 'keitaro-history:' . $name)->toString();
+        return KeitaroHistoryId::forName($name);
     }
 
     private function nullable(mixed $value): ?string

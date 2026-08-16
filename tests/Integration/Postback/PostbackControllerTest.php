@@ -9,6 +9,7 @@ use App\Postback\PostbackController;
 use App\Postback\PostbackOutbox;
 use App\Shared\CampaignIdGenerator;
 use App\Shared\Db\Connection;
+use App\Shared\KeitaroHistoryId;
 use App\Shared\Telegram\TelegramNotifier;
 use App\Admin\Repository\SettingsRepository;
 use App\Shared\Notification\NotificationRegistry;
@@ -132,6 +133,43 @@ test('unknown token returns 404', function (): void {
     expect($resp->getStatusCode())->toBe(404);
 });
 
+test('unknown non-UUID subid returns 404 instead of crashing PostgreSQL', function (): void {
+    $resp = ($this->ctrl)(pbRequest([
+        'subid' => 'legacy.partner.click',
+        'token' => $this->offer->postbackToken,
+    ]), new Response());
+
+    expect($resp->getStatusCode())->toBe(404)
+        ->and((int)$this->db->fetchScalar('SELECT count(*) FROM core.conversions'))->toBe(0);
+});
+
+test('legacy Keitaro subid resolves to its deterministic imported click UUID', function (): void {
+    $legacySubid = 'old-keitaro-click.123';
+    $clickId = clickId($this);
+    $legacyClickId = KeitaroHistoryId::click($legacySubid);
+    $this->db->execute(
+        "UPDATE stats.clicks
+         SET id = :legacy_id, offer_id = :offer_id, source = 'keitaro'
+         WHERE id = :id",
+        ['legacy_id' => $legacyClickId, 'offer_id' => $this->offer->id, 'id' => $clickId],
+    );
+
+    $resp = ($this->ctrl)(pbRequest([
+        'subid' => $legacySubid,
+        'token' => $this->offer->postbackToken,
+        'payout' => '15',
+    ]), new Response());
+
+    expect($resp->getStatusCode())->toBe(200);
+    $row = $this->db->fetchOne(
+        'SELECT click_id, payout FROM core.conversions WHERE click_id = :click_id',
+        ['click_id' => $legacyClickId],
+    );
+    expect($row)->not->toBeNull()
+        ->and($row['click_id'])->toBe($legacyClickId)
+        ->and((float)$row['payout'])->toBe(15.0);
+});
+
 test('shared offer accepts postback for click from any campaign', function (): void {
     $cid = clickId($this);
 
@@ -220,6 +258,55 @@ test('network token requires a bound offer on the click', function (): void {
 
     expect($resp->getStatusCode())->toBe(422);
     expect((int)$this->db->fetchScalar('SELECT count(*) FROM core.conversions'))->toBe(0);
+});
+
+test('network fallback stores an unmatched authenticated postback once and redacts its token', function (): void {
+    $token = str_repeat('d', 40);
+    $_ENV['NETWORK_POSTBACKS'] = json_encode([
+        'example' => [
+            'token' => $token,
+            'hosts' => ['example.com'],
+            'fallback_campaign_id' => $this->camp->id,
+            'currency' => 'USD',
+        ],
+    ], JSON_THROW_ON_ERROR);
+
+    $params = [
+        'network' => 'example',
+        'subid' => 'provider-generated.click',
+        'token' => $token,
+        'payout' => '15',
+        'status' => 'approved',
+    ];
+    $resp = ($this->ctrl)(pbRequest($params), new Response());
+
+    expect($resp->getStatusCode())->toBe(200);
+    $body = json_decode((string)$resp->getBody(), true);
+    expect($body['ok'])->toBeTrue()
+        ->and($body['updated'])->toBeFalse()
+        ->and($body['attributed'])->toBeFalse()
+        ->and($body['mode'])->toBe('network-ping');
+
+    $row = $this->db->fetchOne(
+        "SELECT click_id, campaign_id, offer_id, payout, currency, raw_query, source_data
+         FROM core.conversions WHERE source_id LIKE 'network:example:%'",
+    );
+    expect($row)->not->toBeNull()
+        ->and($row['click_id'])->toBeNull()
+        ->and($row['campaign_id'])->toBe($this->camp->id)
+        ->and($row['offer_id'])->toBeNull()
+        ->and((float)$row['payout'])->toBe(15.0)
+        ->and($row['currency'])->toBe('USD')
+        ->and($row['raw_query'])->toContain('token=[REDACTED]')
+        ->and($row['raw_query'])->not->toContain($token)
+        ->and(json_decode((string)$row['source_data'], true)['attribution'])->toBe('unmatched_subid');
+
+    $params['payout'] = '17';
+    $second = ($this->ctrl)(pbRequest($params), new Response());
+    $secondBody = json_decode((string)$second->getBody(), true);
+    expect($secondBody['updated'])->toBeTrue()
+        ->and((int)$this->db->fetchScalar("SELECT count(*) FROM core.conversions WHERE source_id LIKE 'network:example:%'"))->toBe(1)
+        ->and((float)$this->db->fetchScalar("SELECT payout FROM core.conversions WHERE source_id LIKE 'network:example:%'"))->toBe(17.0);
 });
 
 test('non-USD offer payout is converted to USD with a configured FX rate', function (): void {

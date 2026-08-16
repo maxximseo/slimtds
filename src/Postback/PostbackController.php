@@ -7,6 +7,7 @@ namespace App\Postback;
 use App\Admin\Repository\CampaignRepository;
 use App\Admin\Repository\OfferRepository;
 use App\Shared\Db\Connection;
+use App\Shared\KeitaroHistoryId;
 use App\Shared\RealIp;
 use App\Shared\Referer\SearchEngine;
 use App\Shared\Telegram\TelegramNotifier;
@@ -14,6 +15,7 @@ use App\Admin\Repository\SettingsRepository;
 use App\Shared\Notification\NotificationRegistry;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Ramsey\Uuid\Uuid;
 
 final class PostbackController
 {
@@ -50,6 +52,7 @@ final class PostbackController
         if ($rawQuery === '' && $body !== []) {
             $rawQuery = http_build_query($body);
         }
+        $storedRawQuery = self::redactSensitiveQuery($rawQuery);
 
         $subid      = isset($params['subid']) ? trim((string)$params['subid']) : '';
         $token      = isset($params['token']) ? trim((string)$params['token']) : '';
@@ -131,7 +134,7 @@ final class PostbackController
                     'status'      => $status,
                     'external_id' => $externalId !== '' ? $externalId : null,
                     'source_ip'   => $sourceIp !== '' && $sourceIp !== '0.0.0.0' ? $sourceIp : null,
-                    'raw_query'   => $rawQuery !== '' ? $rawQuery : null,
+                    'raw_query'   => $storedRawQuery !== '' ? $storedRawQuery : null,
                 ],
             );
             if ($this->tg->isConfigured() && $this->settings->getBool('notif_conv_ping_enabled', true)) {
@@ -161,16 +164,31 @@ final class PostbackController
 
         // Lookup click by subid (need offer_id when token came from a campaign).
         // Also pulls lander/geo/device fields used to build a richer Telegram message.
+        $lookupClickId = Uuid::isValid($subid) ? $subid : KeitaroHistoryId::click($subid);
         $clickRow = $this->db->fetchOne(
             'SELECT id, campaign_id, offer_id, visitor_uuid, lander_host, lander_button, country, device,
                     extract(epoch from (now() - created_at))::int AS age_sec
              FROM stats.clicks WHERE id = :id',
-            ['id' => $subid],
+            ['id' => $lookupClickId],
         );
         if ($clickRow === null) {
+            if ($tokenScope === 'network' && $networkConfig !== null && $networkConfig['fallback_campaign_id'] !== null) {
+                return $this->recordUnattributedNetworkPostback(
+                    $response,
+                    $network,
+                    $networkConfig,
+                    $subid,
+                    $payout,
+                    $status,
+                    $externalId,
+                    $sourceIp,
+                    $storedRawQuery,
+                );
+            }
             return $this->json($response, ['ok' => false, 'error' => 'click not found'], 404);
         }
 
+        $clickId = (string)$clickRow['id'];
         $campaignId = (string)$clickRow['campaign_id'];
 
         // Campaign-token: pull offer from the click. Click without an offer
@@ -229,7 +247,7 @@ final class PostbackController
         // Check whether a conversion already exists for this click_id
         $existing = (int)$this->db->fetchScalar(
             "SELECT count(*) FROM core.conversions WHERE click_id = :cid AND source = 'slimtds'",
-            ['cid' => $subid],
+            ['cid' => $clickId],
         );
         $updated = $existing > 0;
 
@@ -252,7 +270,7 @@ final class PostbackController
                 RETURNING id
             SQL,
             [
-                'click_id'    => $subid,
+                'click_id'    => $clickId,
                 'campaign_id' => $campaignId,
                 'offer_id'    => $offer->id,
                 'payout'      => $payout,
@@ -260,7 +278,7 @@ final class PostbackController
                 'external_id' => $externalId !== '' ? $externalId : null,
                 'currency'    => $convCurrency,
                 'source_ip'   => $sourceIp !== '' && $sourceIp !== '0.0.0.0' ? $sourceIp : null,
-                'raw_query'   => $rawQuery !== '' ? $rawQuery : null,
+                'raw_query'   => $storedRawQuery !== '' ? $storedRawQuery : null,
             ],
         );
         $conversionId = $convRow !== null ? (string)$convRow['id'] : null;
@@ -268,7 +286,7 @@ final class PostbackController
         // Enqueue outgoing S2S postbacks (no-ops if offer has no postback_urls)
         if ($conversionId !== null) {
             $this->outbox->enqueue($conversionId, $offer->id, [
-                'click_id'    => $subid,
+                'click_id'    => $clickId,
                 'payout'      => $payout,
                 'status'      => $status,
                 'external_id' => $externalId ?? '',
@@ -325,7 +343,7 @@ final class PostbackController
                     'age'        => self::humanAge($ageSec),
                     'country'    => $country !== '' ? strtoupper($country) : '',
                     'device'     => $device,
-                    'click_id'   => $subid,
+                    'click_id'   => $clickId,
                     'app_url'    => $appUrl,
                 ],
             );
@@ -373,7 +391,7 @@ final class PostbackController
     }
 
     /**
-     * @return array{hosts: list<string>}|null
+     * @return array{hosts:list<string>,fallback_campaign_id:?string,currency:string}|null
      */
     private function networkConfig(string $network, string $token): ?array
     {
@@ -393,7 +411,121 @@ final class PostbackController
             $hosts,
         ))));
 
-        return $hosts === [] ? null : ['hosts' => $hosts];
+        if ($hosts === []) {
+            return null;
+        }
+
+        $fallbackCampaignId = trim((string)($decoded[$network]['fallback_campaign_id'] ?? ''));
+        if (!Uuid::isValid($fallbackCampaignId)) {
+            $fallbackCampaignId = null;
+        }
+        $currency = strtoupper(trim((string)($decoded[$network]['currency'] ?? 'USD')));
+        if (!preg_match('/^[A-Z]{3}$/', $currency)) {
+            $currency = 'USD';
+        }
+
+        return [
+            'hosts' => $hosts,
+            'fallback_campaign_id' => $fallbackCampaignId,
+            'currency' => $currency,
+        ];
+    }
+
+    /**
+     * Keep authenticated network money events even when a partner returns a
+     * stale or provider-generated subid that cannot be mapped to a click.
+     * A configured inactive fallback campaign makes the missing attribution
+     * explicit, while source_id keeps retries idempotent.
+     *
+     * @param array{hosts:list<string>,fallback_campaign_id:?string,currency:string} $networkConfig
+     */
+    private function recordUnattributedNetworkPostback(
+        Response $response,
+        string $network,
+        array $networkConfig,
+        string $subid,
+        string $payout,
+        string $status,
+        ?string $externalId,
+        string $sourceIp,
+        string $storedRawQuery,
+    ): Response {
+        $campaignId = $networkConfig['fallback_campaign_id'];
+        $campaign = $campaignId !== null ? $this->campaigns->findById($campaignId) : null;
+        if ($campaign === null) {
+            return $this->json($response, ['ok' => false, 'error' => 'click not found'], 404);
+        }
+
+        $sourceId = 'network:' . $network . ':' . hash('sha256', $subid);
+        $existing = (int)$this->db->fetchScalar(
+            "SELECT count(*) FROM core.conversions WHERE source = 'slimtds' AND source_id = :source_id",
+            ['source_id' => $sourceId],
+        );
+        $currency = $networkConfig['currency'];
+        $this->db->execute(
+            <<<'SQL'
+                INSERT INTO core.conversions
+                    (click_id, campaign_id, offer_id, payout, status, external_id, currency,
+                     source_ip, raw_query, source, source_id, source_data)
+                VALUES
+                    (NULL, :campaign_id, NULL, :payout, :status, :external_id, :currency,
+                     :source_ip, :raw_query, 'slimtds', :source_id, CAST(:source_data AS jsonb))
+                ON CONFLICT (source, source_id) WHERE source_id IS NOT NULL
+                DO UPDATE SET
+                    payout      = EXCLUDED.payout,
+                    status      = EXCLUDED.status,
+                    external_id = EXCLUDED.external_id,
+                    currency    = EXCLUDED.currency,
+                    source_ip   = EXCLUDED.source_ip,
+                    raw_query   = EXCLUDED.raw_query,
+                    source_data = EXCLUDED.source_data,
+                    updated_at  = now()
+            SQL,
+            [
+                'campaign_id' => $campaign->id,
+                'payout' => $payout,
+                'status' => $status,
+                'external_id' => $externalId !== '' ? $externalId : null,
+                'currency' => $currency,
+                'source_ip' => $sourceIp !== '' && $sourceIp !== '0.0.0.0' ? $sourceIp : null,
+                'raw_query' => $storedRawQuery !== '' ? $storedRawQuery : null,
+                'source_id' => $sourceId,
+                'source_data' => json_encode([
+                    'network' => $network,
+                    'attribution' => 'unmatched_subid',
+                    'received_subid' => $subid,
+                ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            ],
+        );
+
+        if ($this->tg->isConfigured() && $this->settings->getBool('notif_conv_ping_enabled', true)) {
+            $appUrl = rtrim((string)($_ENV['APP_URL'] ?? 'https://slimtds.local'), '/');
+            $this->tg->send($this->notifications->render(
+                NotificationRegistry::CONV_PING,
+                $this->settings->get('notif_conv_ping_template', ''),
+                [
+                    'campaign' => $campaign->name,
+                    'slug' => $campaign->slug,
+                    'status' => $status,
+                    'player_id' => $externalId !== '' && $externalId !== null ? $externalId : '',
+                    'ip' => $sourceIp !== '' ? $sourceIp : '—',
+                    'payout' => self::payoutDisplay($payout, $currency, $payout, $currency),
+                    'app_url' => $appUrl,
+                ],
+            ));
+        }
+
+        return $this->json($response, [
+            'ok' => true,
+            'updated' => $existing > 0,
+            'attributed' => false,
+            'mode' => 'network-ping',
+        ]);
+    }
+
+    private static function redactSensitiveQuery(string $query): string
+    {
+        return (string)preg_replace('/(^|&)token=[^&]*/i', '$1token=[REDACTED]', $query);
     }
 
     /** ISO-2 country → 🇦🇷-style regional-indicator flag (or '' on bad input). */
