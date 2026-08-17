@@ -140,11 +140,13 @@ final class StatsRepository
     /**
      * Conversion KPIs for a window across ALL traffic sources (digest use).
      * Conversions are money events — unlike search stats they must not be
-     * hidden by the search/AI entry-source filter, otherwise a real deposit
-     * from direct/type-in traffic shows up in Telegram as "Conv: 0 · $0.00".
-     * Bot-click conversions are excluded; click-less campaign pings count.
+     * hidden by the search/AI entry-source filter. Click-attributed
+     * conversions are the primary counters; click-less campaign pings
+     * (unmatched legacy postbacks) are counted separately so a batch of
+     * stale partner postbacks never inflates the "leads today" number.
+     * Bot-click conversions are excluded.
      *
-     * @return array{conversions:int, approved:int, payout:string}
+     * @return array{conversions:int, approved:int, payout:string, ping_conversions:int, ping_payout:string}
      */
     public function digestConversions(?string $campaignId, string $sinceIso): array
     {
@@ -155,21 +157,25 @@ final class StatsRepository
         }
 
         $row = $this->db->fetchOne(
-            "SELECT count(cv.id)::int AS conversions,
-                    count(cv.id) FILTER (WHERE cv.status = 'approved')::int AS approved,
-                    COALESCE(sum(cv.payout) FILTER (WHERE cv.status = 'approved'), 0)::text AS payout
+            "SELECT count(cv.id) FILTER (WHERE cv.click_id IS NOT NULL)::int AS conversions,
+                    count(cv.id) FILTER (WHERE cv.click_id IS NOT NULL AND cv.status = 'approved')::int AS approved,
+                    COALESCE(sum(cv.payout) FILTER (WHERE cv.click_id IS NOT NULL AND cv.status = 'approved'), 0)::text AS payout,
+                    count(cv.id) FILTER (WHERE cv.click_id IS NULL)::int AS ping_conversions,
+                    COALESCE(sum(cv.payout) FILTER (WHERE cv.click_id IS NULL), 0)::text AS ping_payout
              FROM core.conversions cv
              LEFT JOIN stats.clicks c ON c.id = cv.click_id
              WHERE cv.created_at >= :since
                AND (c.id IS NULL OR c.is_bot = false)
                {$campaignWhere}",
             $params,
-        ) ?? ['conversions' => 0, 'approved' => 0, 'payout' => '0'];
+        ) ?? ['conversions' => 0, 'approved' => 0, 'payout' => '0', 'ping_conversions' => 0, 'ping_payout' => '0'];
 
         return [
-            'conversions' => (int)$row['conversions'],
-            'approved'    => (int)$row['approved'],
-            'payout'      => (string)$row['payout'],
+            'conversions'      => (int)$row['conversions'],
+            'approved'         => (int)$row['approved'],
+            'payout'           => (string)$row['payout'],
+            'ping_conversions' => (int)$row['ping_conversions'],
+            'ping_payout'      => (string)$row['ping_payout'],
         ];
     }
 
@@ -196,6 +202,7 @@ final class StatsRepository
                  LEFT JOIN stats.clicks linked_click ON linked_click.id = cv.click_id
                  WHERE cv.created_at >= :since
                    AND (linked_click.id IS NULL OR linked_click.is_bot = false)
+                   AND COALESCE(cv.offer_id, linked_click.offer_id) IS NOT NULL
                  GROUP BY COALESCE(cv.offer_id, linked_click.offer_id)
              ), all_clicks AS (
                  SELECT c.offer_id,
