@@ -52,7 +52,7 @@ test('search stats count each visitor once and exclude direct traffic and bots',
         ->and(array_sum(array_column($timeline, 'uniq')))->toBe(2);
 });
 
-test('digest conversions count all sources, exclude bot clicks, include click-less pings', function (): void {
+test('digest conversions count all sources, exclude bot clicks, split click-less pings', function (): void {
     $campaign = '00000000-0000-7000-8000-000000000010';
 
     // a direct (non-search) click, a bot click
@@ -77,9 +77,11 @@ test('digest conversions count all sources, exclude bot clicks, include click-le
 
     $all = $this->repo->digestConversions($campaign, date('c', time() - 10800));
 
-    expect($all['conversions'])->toBe(2)      // direct-click conv + click-less ping
-        ->and($all['approved'])->toBe(1)      // only the direct-click conv is approved
-        ->and((float)$all['payout'])->toBe(15.0);
+    expect($all['conversions'])->toBe(1)      // only the direct-click conv (bot + ping excluded)
+        ->and($all['approved'])->toBe(1)
+        ->and((float)$all['payout'])->toBe(15.0)
+        ->and($all['ping_conversions'])->toBe(1)   // click-less ping counted separately
+        ->and((float)$all['ping_payout'])->toBe(5.0);
 
     // search summary must still hide the non-search conversion
     $search = $this->repo->searchSummary($campaign, date('c', time() - 10800));

@@ -65,24 +65,33 @@ final class TelegramDigestCommand extends Command
                 $convs['approved'],
                 number_format((float)$convs['payout'], 2),
             ),
-            sprintf(
-                'Search: %d conv · $%s · CR <b>%s%%</b> · EPC <b>$%s</b>',
-                $totals['approved'],
-                number_format((float)$totals['payout'], 2),
-                $totals['cr'],
-                number_format($totals['epc'], 4),
-            ),
-            sprintf(
-                '7d Search: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
-                $week['clicks'],
-                number_format($week['epc'], 4),
-            ),
-            sprintf(
-                '30d Search: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
-                $month['clicks'],
-                number_format($month['epc'], 4),
-            ),
         ];
+        // Click-less pings (unmatched legacy postbacks) are real money but
+        // not today's leads — never inflate the Conv line with them.
+        if ($convs['ping_conversions'] > 0) {
+            $lines[] = sprintf(
+                'Непривязанные постбэки (без клика): %d · $%s',
+                $convs['ping_conversions'],
+                number_format((float)$convs['ping_payout'], 2),
+            );
+        }
+        $lines[] = sprintf(
+            'Search: %d conv · $%s · CR <b>%s%%</b> · EPC <b>$%s</b>',
+            $totals['approved'],
+            number_format((float)$totals['payout'], 2),
+            $totals['cr'],
+            number_format($totals['epc'], 4),
+        );
+        $lines[] = sprintf(
+            '7d Search: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
+            $week['clicks'],
+            number_format($week['epc'], 4),
+        );
+        $lines[] = sprintf(
+            '30d Search: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
+            $month['clicks'],
+            number_format($month['epc'], 4),
+        );
 
         // Top 10 campaigns by unique search visitors
         $allCampaigns = $this->campaigns->page(1, 200);
