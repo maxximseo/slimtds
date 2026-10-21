@@ -33,6 +33,9 @@
 # Daily Telegram digest at 07:00 Europe/Moscow (04:00 UTC)
 0 4 * * * /usr/local/bin/php /app/bin/console telegram:digest
 
+# Hourly AI-assistant clicks digest at :05 (sends only when AI clicks exist)
+5 * * * * /usr/local/bin/php /app/bin/console telegram:ai-clicks-hourly
+
 # Hourly system alerts
 0 * * * * /usr/local/bin/php /app/bin/console telegram:alerts
 

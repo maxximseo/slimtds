@@ -142,6 +142,46 @@ final class StatsRepository
     }
 
     /**
+     * Hourly AI-clicks digest source: unique non-bot visitors per AI engine
+     * with a per-campaign breakdown, engines sorted by clicks desc.
+     *
+     * @return list<array{engine:string, clicks:int, campaigns:list<array{slug:string, clicks:int}>}>
+     */
+    public function aiClicksBreakdown(string $sinceIso): array
+    {
+        $rows = [];
+        foreach (SearchEngine::AI_ENGINES as $engine) {
+            [$refWhere, $refParams] = SearchEngine::sqlFilterEnginesCompact(
+                [$engine],
+                SearchEngine::clickEntryRefererSql('c'),
+                'ai_' . $engine,
+            );
+            if ($refWhere === '') continue;
+            $campaignRows = $this->db->fetchAll(
+                "SELECT co.slug AS slug, count(DISTINCT c.visitor_uuid)::int AS clicks
+                 FROM stats.clicks c
+                 LEFT JOIN core.campaigns co ON co.id = c.campaign_id
+                 WHERE c.created_at >= :since
+                   AND c.is_bot = false
+                   AND {$refWhere}
+                 GROUP BY co.slug
+                 ORDER BY clicks DESC",
+                ['since' => $sinceIso] + $refParams,
+            );
+            $campaigns = array_map(static fn ($r) => [
+                'slug'   => (string)($r['slug'] ?? '(no campaign)'),
+                'clicks' => (int)$r['clicks'],
+            ], $campaignRows);
+            $total = array_sum(array_column($campaigns, 'clicks'));
+            if ($total > 0) {
+                $rows[] = ['engine' => $engine, 'clicks' => $total, 'campaigns' => $campaigns];
+            }
+        }
+        usort($rows, static fn ($a, $b) => $b['clicks'] <=> $a['clicks']);
+        return $rows;
+    }
+
+    /**
      * @param array<string,string> $refParams
      * @return array{clicks:int, uniq:int, bots:int, conversions:int, approved:int, payout:string, cr:float, epc:float}
      */
