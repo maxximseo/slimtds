@@ -58,6 +58,21 @@ After editing CSS/JS templates, rebuild assets — admin views resolve URLs thro
 
 ## Architecture map
 
+### Standing campaign traffic policy — 2026-10-21
+
+All existing and future campaign routes block visitors geolocated to mainland China
+(`cn`) before campaign lookup, visitor tracking, flow matching, trash fallbacks and
+response schemas. Return only a black HTML page with no redirects or external
+resources and `Cache-Control: private, no-store`. Do not exempt campaigns, including
+Glory, or change their flow/offer configuration to implement this global policy.
+The guard checks the effective IP plus X-Real-IP and CF-Connecting-IP independently
+to prevent a forged higher-priority attribution header from overriding a CN address.
+Production nginx must overwrite CF-Connecting-IP with its resolved client address;
+lander proxies must overwrite X-Real-IP. Keep backend access loopback-only and
+campaign responses uncached. Unknown GeoIP locations retain normal routing.
+This policy covers tracker campaign responses, not links that bypass the tracker
+or visitors using a VPN outside China.
+
 ### Engine hot-path (`/<slug>` for organic traffic)
 
 `src/Engine/ClickHandler.php` orchestrates the full pipeline; understanding the order is essential before touching any of the components:
