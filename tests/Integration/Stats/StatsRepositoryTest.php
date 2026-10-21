@@ -322,3 +322,35 @@ test('digest preview renders unique site counts and escapes HTML without sending
         $_ENV['APP_ENV'] = $before;
     }
 });
+
+test('ai clicks visitors lists per-visitor detail with site, geo, campaign and dedups by visitor', function (): void {
+    $campaign = '00000000-0000-7000-8000-000000000010';
+
+    $this->db->execute(
+        "INSERT INTO core.campaigns (id, slug, name, is_active)
+         VALUES (:campaign, 'spsafrica', 'SPS Africa', true)
+         ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name",
+        ['campaign' => $campaign],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.clicks (id, campaign_id, visitor_uuid, ip, referer, utm_source, country, device, is_bot, created_at)
+         VALUES
+            ('00000000-0000-7000-8000-0000000000a1', :campaign, '00000000-0000-7000-8000-000000000081', '1.1.1.1', 'https://chatgpt.com/share/a', 'site-paris-sportifs-cotedivoire.com', 'ci', 'mobile', false, now()),
+            ('00000000-0000-7000-8000-0000000000a2', :campaign, '00000000-0000-7000-8000-000000000081', '1.1.1.1', 'https://chatgpt.com/share/a', 'site-paris-sportifs-cotedivoire.com', 'ci', 'mobile', false, now()),
+            ('00000000-0000-7000-8000-0000000000a3', :campaign, '00000000-0000-7000-8000-000000000082', '1.1.1.2', 'https://duck.ai/chat/b', 'site-paris-sportifs-benin.com', 'bj', 'desktop', false, now()),
+            ('00000000-0000-7000-8000-0000000000a4', :campaign, '00000000-0000-7000-8000-000000000083', '1.1.1.3', 'https://www.google.com/search?q=x', 'x.com', 'fr', 'mobile', false, now())",
+        ['campaign' => $campaign],
+    );
+
+    $rows = $this->repo->aiClicksVisitors(date('c', time() - 3600));
+    $byVisitor = array_column($rows, null, 'visitor_uuid');
+
+    expect($rows)->toHaveCount(2)
+        ->and($byVisitor['00000000-0000-7000-8000-000000000081']['site'])->toBe('https://site-paris-sportifs-cotedivoire.com/')
+        ->and($byVisitor['00000000-0000-7000-8000-000000000081']['country'])->toBe('CI')
+        ->and($byVisitor['00000000-0000-7000-8000-000000000081']['device'])->toBe('mobile')
+        ->and($byVisitor['00000000-0000-7000-8000-000000000081']['campaign'])->toBe('spsafrica')
+        ->and($byVisitor['00000000-0000-7000-8000-000000000082']['site'])->toBe('https://site-paris-sportifs-benin.com/')
+        ->and($byVisitor['00000000-0000-7000-8000-000000000082']['engine'])->toBe('duck_ai')
+        ->and(isset($byVisitor['00000000-0000-7000-8000-000000000083']))->toBeFalse();
+});

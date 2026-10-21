@@ -152,6 +152,87 @@ final class StatsRepository
     }
 
     /**
+     * Per-visitor AI-click detail for the hourly digest: one row per unique
+     * visitor per AI engine, with the lander site, geo/device, campaign and
+     * the admin click link target.
+     *
+     * @return list<array{engine:string, click_id:string, visitor_uuid:string, country:string, device:string, site:string, campaign:string, out_url:string}>
+     */
+    public function aiClicksVisitors(string $sinceIso): array
+    {
+        [$refWhere, $refParams] = SearchEngine::sqlFilterEnginesCompact(
+            SearchEngine::AI_ENGINES,
+            SearchEngine::clickEntryRefererSql('c'),
+            'ai',
+        );
+        $entryPageSql = "(
+            SELECT pe2.page_url
+            FROM stats.pixel_events pe2
+            WHERE pe2.visitor_uuid = c.visitor_uuid
+              AND pe2.created_at >= c.created_at - interval '24 hours'
+              AND pe2.created_at <= c.created_at + interval '5 minutes'
+            ORDER BY pe2.created_at DESC
+            LIMIT 1
+        )";
+        $rows = $this->db->fetchAll(
+            "SELECT c.id::text AS click_id, c.visitor_uuid::text AS visitor_uuid,
+                    COALESCE(c.country, '') AS country, COALESCE(c.device, '') AS device,
+                    COALESCE(c.utm_source, '') AS utm_source, COALESCE(c.out_url, '') AS out_url,
+                    COALESCE(co.slug, '(no campaign)') AS campaign,
+                    " . SearchEngine::clickEntryRefererSql('c') . " AS entry_referer,
+                    {$entryPageSql} AS entry_page
+             FROM stats.clicks c
+             LEFT JOIN core.campaigns co ON co.id = c.campaign_id
+             WHERE c.created_at >= :since
+               AND c.is_bot = false
+               AND {$refWhere}
+             ORDER BY c.created_at DESC
+             LIMIT 60",
+            ['since' => $sinceIso] + $refParams,
+        );
+
+        $byEngine = [];
+        $seen = [];
+        foreach ($rows as $row) {
+            $engine = SearchEngine::classify((string)($row['entry_referer'] ?? '')) ?? 'ai';
+            $visitor = (string)$row['visitor_uuid'];
+            $key = $engine . '|' . $visitor;
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+
+            $utmHost = trim((string)$row['utm_source']);
+            if ($utmHost !== '') {
+                $site = 'https://' . $utmHost . '/';
+            } elseif (!empty($row['entry_page'])) {
+                $site = (string)$row['entry_page'];
+            } else {
+                $site = '(direct)';
+            }
+
+            $byEngine[$engine]['clicks'] = ($byEngine[$engine]['clicks'] ?? 0) + 1;
+            $byEngine[$engine]['visitors'][] = [
+                'engine'       => $engine,
+                'click_id'     => (string)$row['click_id'],
+                'visitor_uuid' => $visitor,
+                'country'      => strtoupper((string)$row['country']),
+                'device'       => (string)$row['device'],
+                'site'         => $site,
+                'campaign'     => (string)$row['campaign'],
+                'out_url'      => (string)$row['out_url'],
+            ];
+        }
+
+        uasort($byEngine, static fn ($a, $b) => $b['clicks'] <=> $a['clicks']);
+        $out = [];
+        foreach ($byEngine as $engine => $group) {
+            foreach ($group['visitors'] as $v) {
+                $out[] = $v;
+            }
+        }
+        return $out;
+    }
+
+    /**
      * Unique non-bot visitors per AI assistant in a window, sorted desc.
      *
      * @return list<array{engine:string, clicks:int}>
