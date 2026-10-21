@@ -319,7 +319,7 @@ final class PostbackController
             if ($visitorUuid !== '') {
                 $entryRef = (string)($this->db->fetchScalar(
                     "SELECT referer FROM stats.pixel_events
-                     WHERE visitor_uuid = :v AND created_at >= now() - interval '30 days'
+                     WHERE LOWER(country) IS DISTINCT FROM 'cn' AND visitor_uuid = :v AND created_at >= now() - interval '30 days'
                      ORDER BY created_at ASC LIMIT 1",
                     ['v' => $visitorUuid],
                 ) ?? '');

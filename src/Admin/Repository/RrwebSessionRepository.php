@@ -33,7 +33,7 @@ final class RrwebSessionRepository
      */
     private function whereClause(array $filters, array &$params): string
     {
-        $conds = [];
+        $conds = ["LOWER(country) IS DISTINCT FROM 'cn'"];
         foreach (self::FILTERS as $key => $expr) {
             $val = $filters[$key] ?? null;
             if ($val === null || $val === '') {
@@ -62,14 +62,14 @@ final class RrwebSessionRepository
                 $params += $p1;
             }
             if ($f2 !== '') {
-                $parts[] = "EXISTS (SELECT 1 FROM stats.pixel_events pe WHERE pe.fp_js = stats.rrweb_sessions.fp_js AND {$f2})";
+                $parts[] = "EXISTS (SELECT 1 FROM stats.pixel_events pe WHERE LOWER(pe.country) IS DISTINCT FROM 'cn' AND pe.fp_js = stats.rrweb_sessions.fp_js AND {$f2})";
                 $params += $p2;
             }
             if ($parts !== []) {
                 $conds[] = '(' . implode(' OR ', $parts) . ')';
             }
         }
-        return $conds === [] ? '' : 'WHERE ' . implode(' AND ', $conds);
+        return 'WHERE ' . implode(' AND ', $conds);
     }
 
     /** sort key → ORDER BY expression (whitelist). */
@@ -123,7 +123,7 @@ final class RrwebSessionRepository
         }
         $rows = $this->db->fetchAll(
             "SELECT DISTINCT {$expr} AS v FROM stats.rrweb_sessions
-             WHERE {$expr} IS NOT NULL AND {$expr} <> '' ORDER BY v",
+             WHERE LOWER(country) IS DISTINCT FROM 'cn' AND {$expr} IS NOT NULL AND {$expr} <> '' ORDER BY v",
         );
         return array_values(array_map(
             static fn (array $r): string => (string)($r['v'] ?? ''),
@@ -157,7 +157,7 @@ final class RrwebSessionRepository
         }
         $rows = $this->db->fetchAll(
             'SELECT DISTINCT ON (fp_js) fp_js, referer FROM stats.pixel_events
-             WHERE fp_js IN (' . implode(',', $in) . ") AND ({$frag})
+             WHERE LOWER(country) IS DISTINCT FROM \'cn\' AND fp_js IN (' . implode(',', $in) . ") AND ({$frag})
              ORDER BY fp_js, created_at",
             $params,
         );
@@ -175,7 +175,7 @@ final class RrwebSessionRepository
             'SELECT session_id, campaign_id, visitor_uuid, fp_js, page_url, started_at, last_at,
                     chunk_count, event_count, bytes, country, device, ip, os, browser, referer,
                     (last_event_ms - first_event_ms) AS duration_ms
-             FROM stats.rrweb_sessions WHERE session_id = :s',
+             FROM stats.rrweb_sessions WHERE LOWER(country) IS DISTINCT FROM \'cn\' AND session_id = :s',
             ['s' => $sessionId],
         );
     }
@@ -193,6 +193,8 @@ final class RrwebSessionRepository
             "SELECT encode(payload,'base64') AS b64
              FROM stats.rrweb_chunks
              WHERE session_id = :s
+               AND EXISTS (SELECT 1 FROM stats.rrweb_sessions s
+                           WHERE s.session_id = :s AND LOWER(s.country) IS DISTINCT FROM 'cn')
              ORDER BY created_at, seq",
             ['s' => $sessionId],
         );

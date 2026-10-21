@@ -96,3 +96,16 @@ test('drainOnce isolates a bad row: non-uuid sid is skipped, valid row still flu
     $sess = $this->db->fetchOne('SELECT event_count FROM stats.rrweb_sessions WHERE session_id = :s', ['s' => $good]);
     expect((int)$sess['event_count'])->toBe(2);
 });
+
+test('queued China recordings drain without chunks or sessions', function (): void {
+    $repo = new CampaignRepository($this->db, new CampaignIdGenerator());
+    $cmd = new RrwebFlushCommand($this->db, $repo, new GeoLookup(dirname(__DIR__, 2) . '/Fixtures/GeoIP'), new DeviceDetector(), new Partitions($this->pdo));
+    $this->db->execute(
+        "INSERT INTO stats.rrweb_inbox (payload, ip) VALUES (:p::jsonb, '175.16.199.1')",
+        ['p' => json_encode(['c' => 'flx01', 'sid' => '33333333-3333-7333-8333-333333333333', 'seq' => 0, 'events' => [['type' => 4]]])],
+    );
+    expect($cmd->drainOnce())->toBe(1)
+        ->and((int)$this->db->fetchScalar('SELECT count(*) FROM stats.rrweb_inbox'))->toBe(0)
+        ->and((int)$this->db->fetchScalar('SELECT count(*) FROM stats.rrweb_chunks'))->toBe(0)
+        ->and((int)$this->db->fetchScalar('SELECT count(*) FROM stats.rrweb_sessions'))->toBe(0);
+});

@@ -24,6 +24,7 @@ beforeEach(function (): void {
         $this->repo,
         new VisitorResolver($this->db),
         $this->db,
+        new \App\Engine\CountryBlock(new \App\Engine\GeoLookup(dirname(__DIR__, 2) . "/Fixtures/GeoIP")),
     );
 
     $this->camp = $this->repo->create(['name' => 'Pixel Test', 'slug' => 'px01', 'is_active' => '1']);
@@ -102,3 +103,17 @@ test('new visitor gets Set-Cookie vu header', function (): void {
     expect($cookie)->toContain('vu=');
     expect($cookie)->toContain('Path=/');
 });
+
+test('China pixel requests create no identity or inbox rows even with forged attribution', function (array $headers): void {
+    $req = pixelRequest(['c' => 'px01', 'url' => 'https://lander.test/']);
+    foreach ($headers as $name => $ip) $req = $req->withHeader($name, $ip);
+    $resp = ($this->ctrl)($req->withHeader('Origin', 'https://lander.test'), new Response());
+    expect($resp->getStatusCode())->toBe(204)->and($resp->getHeaderLine('Set-Cookie'))->toBe('')
+        ->and($resp->getHeaderLine('Access-Control-Allow-Origin'))->toBe('https://lander.test');
+    expect((int)$this->db->fetchScalar('SELECT count(*) FROM stats.pixel_events_inbox'))->toBe(0)
+        ->and((int)$this->db->fetchScalar('SELECT count(*) FROM stats.visitors_fingerprints'))->toBe(0);
+})->with([
+    [['X-Real-IP' => '175.16.199.1']],
+    [['X-Slim-IP' => '81.2.69.142', 'X-Real-IP' => '81.2.69.142', 'CF-Connecting-IP' => '175.16.199.1']],
+    [['X-Slim-IP' => '81.2.69.142', 'X-Real-IP' => '175.16.199.1', 'CF-Connecting-IP' => '81.2.69.142']],
+]);

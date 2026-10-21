@@ -66,11 +66,6 @@ parameters:
 			path: src/Engine/VisitorResolver.php
 
 		-
-			message: "#^Ternary operator condition is always true\\.$#"
-			count: 1
-			path: src/Pixel/PixelEventRepository.php
-
-		-
 			message: "#^Function flash\\(\\) return type has no value type specified in iterable type array\\.$#"
 			count: 1
 			path: src/Shared/View/Helpers.php

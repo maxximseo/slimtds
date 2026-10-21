@@ -116,7 +116,7 @@ final class StatsRepository
                         substring(c.referer from '(?i)^https?://([^/:?#]+)') END,
                     (SELECT substring(pe.page_url from '(?i)^https?://([^/:?#]+)')
                      FROM stats.pixel_events pe
-                     WHERE pe.visitor_uuid = c.visitor_uuid
+                     WHERE LOWER(pe.country) IS DISTINCT FROM 'cn' AND pe.visitor_uuid = c.visitor_uuid
                        AND pe.campaign_id = c.campaign_id
                        AND pe.created_at >= c.created_at - interval '24 hours'
                        AND pe.created_at <= c.created_at + interval '5 minutes'
@@ -124,7 +124,7 @@ final class StatsRepository
                     ''
                 ) AS host
                 FROM stats.clicks c
-                WHERE c.created_at >= :since AND c.is_bot = false
+                WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since AND c.is_bot = false
                   AND {$refWhere} {$campaignWhere}
             )
             SELECT regexp_replace(lower(host), '^www\\.', '') AS site,
@@ -168,7 +168,7 @@ final class StatsRepository
         $entryPageSql = "(
             SELECT pe2.page_url
             FROM stats.pixel_events pe2
-            WHERE pe2.visitor_uuid = c.visitor_uuid
+            WHERE LOWER(pe2.country) IS DISTINCT FROM 'cn' AND pe2.visitor_uuid = c.visitor_uuid
               AND pe2.created_at >= c.created_at - interval '24 hours'
               AND pe2.created_at <= c.created_at + interval '5 minutes'
             ORDER BY pe2.created_at DESC
@@ -183,7 +183,7 @@ final class StatsRepository
                     {$entryPageSql} AS entry_page
              FROM stats.clicks c
              LEFT JOIN core.campaigns co ON co.id = c.campaign_id
-             WHERE c.created_at >= :since
+             WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                AND c.is_bot = false
                AND {$refWhere}
              ORDER BY c.created_at DESC
@@ -250,7 +250,7 @@ final class StatsRepository
             $row = $this->db->fetchOne(
                 "SELECT count(DISTINCT c.visitor_uuid)::int AS clicks
                  FROM stats.clicks c
-                 WHERE c.created_at >= :since
+                 WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                    AND c.is_bot = false
                    AND {$refWhere}",
                 ['since' => $sinceIso] + $refParams,
@@ -281,7 +281,7 @@ final class StatsRepository
                 "SELECT co.slug AS slug, count(DISTINCT c.visitor_uuid)::int AS clicks
                  FROM stats.clicks c
                  LEFT JOIN core.campaigns co ON co.id = c.campaign_id
-                 WHERE c.created_at >= :since
+                 WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                    AND c.is_bot = false
                    AND {$refWhere}
                  GROUP BY co.slug
@@ -297,7 +297,7 @@ final class StatsRepository
             $siteRows = $this->db->fetchAll(
                 "SELECT c.utm_source AS host, count(DISTINCT c.visitor_uuid)::int AS clicks
                  FROM stats.clicks c
-                 WHERE c.created_at >= :since
+                 WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                    AND c.is_bot = false
                    AND c.utm_source IS NOT NULL
                    AND c.utm_source <> ''
@@ -341,7 +341,7 @@ final class StatsRepository
             "SELECT count(DISTINCT c.visitor_uuid)::int AS clicks,
                     count(DISTINCT c.visitor_uuid)::int AS uniq
              FROM stats.clicks c
-             WHERE c.created_at >= :since
+             WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                AND c.is_bot = false
                AND {$refWhere}
                {$campaignWhere}",
@@ -446,14 +446,14 @@ final class StatsRepository
                  SELECT c.offer_id,
                         count(DISTINCT c.visitor_uuid)::int AS clicks
                  FROM stats.clicks c
-                 WHERE c.created_at >= :since
+                 WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                    AND c.is_bot = false
                  GROUP BY c.offer_id
              ), search_clicks AS (
                  SELECT c.offer_id,
                         count(DISTINCT c.visitor_uuid)::int AS clicks
                  FROM stats.clicks c
-                 WHERE c.created_at >= :since
+                 WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                    AND c.is_bot = false
                    AND {$refWhere}
                  GROUP BY c.offer_id
@@ -525,7 +525,7 @@ final class StatsRepository
              FROM (
                  SELECT DISTINCT ON (c.visitor_uuid) c.created_at
                  FROM stats.clicks c
-                 WHERE c.created_at >= :since
+                 WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.created_at >= :since
                    AND c.is_bot = false
                    AND {$refWhere}
                    {$campaignWhere}

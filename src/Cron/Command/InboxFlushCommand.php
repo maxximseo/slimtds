@@ -74,7 +74,6 @@ final class InboxFlushCommand extends Command
             return 0;
         }
 
-        $geoOk = $this->geo->isAvailable();
         $ids = [];
         foreach ($rows as $row) {
             $payload = is_string($row['payload']) ? json_decode($row['payload'], true) : $row['payload'];
@@ -92,8 +91,12 @@ final class InboxFlushCommand extends Command
                 campaignSlug: '',
                 timestamp: (int)strtotime((string)$row['created_at']),
             );
-            if ($geoOk && $ip !== '') {
+            if ($ip !== '') {
                 $this->geo->lookup($ctx);
+            }
+            if (strtolower($ctx->country ?? '') === 'cn') {
+                $ids[] = $row['id'];
+                continue;
             }
             $this->deviceDetector->detect($ctx, (string)($row['accept_lang'] ?? ''));
             // Bot detection runs AFTER geo (needs ASN+ISP); same logic as the engine.

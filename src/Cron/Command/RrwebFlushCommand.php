@@ -133,6 +133,11 @@ final class RrwebFlushCommand extends Command
             // queued for delete, so we skip it instead of aborting (and re-looping)
             // the whole batch.
             try {
+                $ip = (string)($row['ip'] ?? '');
+                $ip = $ip !== '' ? $ip : null;
+                [$country, $device, $os, $browser] = $this->enrich($ip ?? '', (string)($row['user_agent'] ?? ''), $createdAt);
+                if (strtolower($country ?? '') === 'cn') continue;
+
                 $this->db->execute(
                     <<<'SQL'
                         INSERT INTO stats.rrweb_chunks (session_id, campaign_id, visitor_uuid, seq, payload, created_at)
@@ -141,9 +146,6 @@ final class RrwebFlushCommand extends Command
                     ['sid' => $sid, 'cid' => $campaignId, 'vu' => $vu, 'seq' => $seq, 'b64' => $b64, 'created_at' => $createdAt],
                 );
 
-                $ip = (string)($row['ip'] ?? '');
-                $ip = $ip !== '' ? $ip : null;
-                [$country, $device, $os, $browser] = $this->enrich($ip ?? '', (string)($row['user_agent'] ?? ''), $createdAt);
 
                 $this->db->execute(
                     <<<'SQL'
@@ -190,7 +192,7 @@ final class RrwebFlushCommand extends Command
     private function enrich(string $ip, string $ua, string $createdAt): array
     {
         $ctx = new Context(ip: $ip, userAgent: $ua, campaignSlug: '', timestamp: (int)strtotime($createdAt));
-        if ($this->geo->isAvailable() && $ip !== '') {
+        if ($ip !== '') {
             $this->geo->lookup($ctx);
         }
         $this->deviceDetector->detect($ctx, '');
