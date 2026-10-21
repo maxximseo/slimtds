@@ -230,9 +230,12 @@ final class InboxFlushCommand extends Command
      */
     private function sources(string $key): array
     {
-        $raw = $this->settings->get($key, '["chatgpt","google"]');
+        // Default: every known AI assistant + Google, so AI-referral clicks
+        // notify out of the box; the settings row narrows the list if set.
+        $default = array_merge(SearchEngine::AI_ENGINES, ['google']);
+        $raw = $this->settings->get($key, (string)json_encode($default));
         $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) return ['chatgpt', 'google'];
+        if (!is_array($decoded)) return $default;
         return array_values(array_filter($decoded, 'is_string'));
     }
 

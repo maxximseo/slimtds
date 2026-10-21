@@ -194,6 +194,33 @@ final class SearchEngine
     }
 
     /**
+     * LIKE-ANY variant of sqlFilterEngines() for complex SQL expressions that
+     * must be evaluated once (e.g. clickEntryRefererSql()).
+     *
+     * @param list<string> $engineKeys
+     * @return array{0:string, 1:array<string,string>}
+     */
+    public static function sqlFilterEnginesCompact(array $engineKeys, string $col, string $paramPrefix = 'se'): array
+    {
+        $patterns = [];
+        foreach ($engineKeys as $key) {
+            foreach (self::ENGINES[$key] ?? [] as $p) {
+                $patterns[] = $p;
+            }
+        }
+        if ($patterns === []) return ['', []];
+
+        $binds = [];
+        $params = [];
+        foreach ($patterns as $i => $pattern) {
+            $name = $paramPrefix . '_' . $i;
+            $binds[] = ':' . $name;
+            $params[$name] = '%' . strtolower($pattern) . '%';
+        }
+        return ["(LOWER({$col}) LIKE ANY (ARRAY[" . implode(', ', $binds) . ']::text[]))', $params];
+    }
+
+    /**
      * @param list<string> $patterns
      * @return array{0:string, 1:array<string,string>}
      */

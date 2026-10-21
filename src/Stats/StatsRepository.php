@@ -93,6 +93,60 @@ final class StatsRepository
             SearchEngine::clickEntryRefererSql('c'),
             'search',
         );
+        return $this->engineSummary($refWhere, $refParams, $campaignId, $sinceIso);
+    }
+
+    /**
+     * Same KPIs as searchSummary(), restricted to AI-assistant entry sources
+     * (ChatGPT, Gemini, Perplexity, Copilot, Claude, ...).
+     *
+     * @return array{clicks:int, uniq:int, bots:int, conversions:int, approved:int, payout:string, cr:float, epc:float}
+     */
+    public function aiSummary(?string $campaignId, string $sinceIso): array
+    {
+        [$refWhere, $refParams] = SearchEngine::sqlFilterEnginesCompact(
+            SearchEngine::AI_ENGINES,
+            SearchEngine::clickEntryRefererSql('c'),
+            'ai',
+        );
+        return $this->engineSummary($refWhere, $refParams, $campaignId, $sinceIso);
+    }
+
+    /**
+     * Unique non-bot visitors per AI assistant in a window, sorted desc.
+     *
+     * @return list<array{engine:string, clicks:int}>
+     */
+    public function aiSourceBreakdown(string $sinceIso): array
+    {
+        $rows = [];
+        foreach (SearchEngine::AI_ENGINES as $engine) {
+            [$refWhere, $refParams] = SearchEngine::sqlFilterEnginesCompact(
+                [$engine],
+                SearchEngine::clickEntryRefererSql('c'),
+                'ai_' . $engine,
+            );
+            if ($refWhere === '') continue;
+            $row = $this->db->fetchOne(
+                "SELECT count(DISTINCT c.visitor_uuid)::int AS clicks
+                 FROM stats.clicks c
+                 WHERE c.created_at >= :since
+                   AND c.is_bot = false
+                   AND {$refWhere}",
+                ['since' => $sinceIso] + $refParams,
+            );
+            $rows[] = ['engine' => $engine, 'clicks' => (int)($row['clicks'] ?? 0)];
+        }
+        usort($rows, static fn ($a, $b) => $b['clicks'] <=> $a['clicks']);
+        return $rows;
+    }
+
+    /**
+     * @param array<string,string> $refParams
+     * @return array{clicks:int, uniq:int, bots:int, conversions:int, approved:int, payout:string, cr:float, epc:float}
+     */
+    private function engineSummary(string $refWhere, array $refParams, ?string $campaignId, string $sinceIso): array
+    {
         $campaignWhere = $campaignId !== null ? 'AND c.campaign_id = :cid' : '';
         $params = ['since' => $sinceIso] + $refParams;
         if ($campaignId !== null) {

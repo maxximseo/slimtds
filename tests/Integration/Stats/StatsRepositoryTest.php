@@ -134,3 +134,41 @@ test('digest offer EPC uses the actual routed offer instead of the campaign name
         ->and($byName['Glory Actual']['search_clicks'])->toBe(2)
         ->and($byName['Glory Actual']['search_epc'])->toBe(10.0);
 });
+
+test('ai summary counts AI-assistant visitors separately from classic search engines', function (): void {
+    $campaign = '00000000-0000-7000-8000-000000000010';
+    $chatVisitor = '00000000-0000-7000-8000-000000000021';
+    $geminiVisitor = '00000000-0000-7000-8000-000000000022';
+
+    $this->db->execute(
+        "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, referer, is_bot, created_at)
+         VALUES
+            (:campaign, :chat_visitor, '1.1.1.1', 'https://chatgpt.com/share/abc', false, now()),
+            (:campaign, :gemini_visitor, '1.1.1.2', 'https://gemini.google.com/app/xyz', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000023', '1.1.1.3', 'https://www.google.com/search?q=loan', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000024', '1.1.1.4', 'https://lander.test/page', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000025', '1.1.1.5', 'https://chatgpt.com/share/bot', true, now())",
+        ['campaign' => $campaign, 'chat_visitor' => $chatVisitor, 'gemini_visitor' => $geminiVisitor],
+    );
+    $this->db->execute(
+        "INSERT INTO core.conversions (click_id, campaign_id, payout, status, currency, created_at)
+         SELECT id, :campaign, '12.00', 'approved', 'USD', now()
+         FROM stats.clicks WHERE visitor_uuid = :chat_visitor LIMIT 1",
+        ['campaign' => $campaign, 'chat_visitor' => $chatVisitor],
+    );
+
+    $since = date('c', time() - 3600);
+    $ai = $this->repo->aiSummary($campaign, $since);
+    $search = $this->repo->searchSummary($campaign, $since);
+    $breakdown = array_column($this->repo->aiSourceBreakdown($since), 'clicks', 'engine');
+
+    expect($ai['clicks'])->toBe(2)
+        ->and($ai['approved'])->toBe(1)
+        ->and((float)$ai['payout'])->toBe(12.0)
+        ->and($ai['epc'])->toBe(6.0)
+        // classic search+AI lens still sees Google plus both AI visitors
+        ->and($search['clicks'])->toBe(3)
+        ->and($breakdown['chatgpt'])->toBe(1)
+        ->and($breakdown['gemini'])->toBe(1)
+        ->and($breakdown['copilot'] ?? 0)->toBe(0);
+});
