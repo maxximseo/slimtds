@@ -49,6 +49,11 @@ final class TelegramDigestCommand extends Command
         $convs  = $this->stats->digestConversions(null, $since);
         $week   = $this->stats->searchSummary(null, date('Y-m-d\TH:i:sP', strtotime('-7 days')));
         $month  = $this->stats->searchSummary(null, $monthSince);
+        // AI assistants (ChatGPT, Gemini, Perplexity, ...) get their own
+        // lines next to the classic-search ones — same KPIs, AI-only filter.
+        $aiTotals = $this->stats->aiSummary(null, $since);
+        $aiWeek   = $this->stats->aiSummary(null, date('Y-m-d\TH:i:sP', strtotime('-7 days')));
+        $aiMonth  = $this->stats->aiSummary(null, $monthSince);
 
         $lines = [
             sprintf(
@@ -92,6 +97,40 @@ final class TelegramDigestCommand extends Command
             $month['clicks'],
             number_format($month['epc'], 4),
         );
+        $lines[] = sprintf(
+            'AI visitors (нейросети): <b>%d</b> (bots excluded)',
+            $aiTotals['clicks'],
+        );
+        $lines[] = sprintf(
+            'AI: %d conv · $%s · CR <b>%s%%</b> · EPC <b>$%s</b>',
+            $aiTotals['approved'],
+            number_format((float)$aiTotals['payout'], 2),
+            $aiTotals['cr'],
+            number_format($aiTotals['epc'], 4),
+        );
+        $lines[] = sprintf(
+            '7d AI: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
+            $aiWeek['clicks'],
+            number_format($aiWeek['epc'], 4),
+        );
+        $lines[] = sprintf(
+            '30d AI: <b>%d</b> uniq clicks · EPC <b>$%s</b>',
+            $aiMonth['clicks'],
+            number_format($aiMonth['epc'], 4),
+        );
+        $aiSources = array_values(array_filter(
+            $this->stats->aiSourceBreakdown($since),
+            static fn ($row) => $row['clicks'] > 0,
+        ));
+        if ($aiSources !== []) {
+            $lines[] = sprintf(
+                'Top AI sources (24h): %s',
+                implode(' · ', array_map(
+                    static fn ($row) => sprintf('%s %d', $row['engine'], $row['clicks']),
+                    $aiSources,
+                )),
+            );
+        }
 
         // Top 10 campaigns by unique search visitors
         $allCampaigns = $this->campaigns->page(1, 200);
