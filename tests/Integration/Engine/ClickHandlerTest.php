@@ -40,6 +40,7 @@ beforeEach(function (): void {
         new VisitorResolver($this->db),
         new DeviceDetector(),
         new GeoLookup(dirname(__DIR__, 2) . '/Fixtures/GeoIP'),
+        new \App\Engine\CountryBlock(new GeoLookup(dirname(__DIR__, 2) . '/Fixtures/GeoIP')),
         new BotDetector($this->db),
         new FlowMatcher($fRepo, $compiler),
         new OfferPicker(),

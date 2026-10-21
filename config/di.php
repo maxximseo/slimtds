@@ -81,6 +81,7 @@ return static function (): \DI\Container {
         \App\Engine\VisitorResolver::class => \DI\autowire(),
         \App\Engine\DeviceDetector::class => \DI\autowire(),
         \App\Engine\GeoLookup::class => \DI\autowire(),
+        \App\Engine\CountryBlock::class => \DI\autowire(),
         \App\Engine\BotDetector::class => \DI\autowire(),
         \App\Engine\FilterCompiler::class => \DI\autowire(),
         \App\Engine\FlowMatcher::class => \DI\autowire(),

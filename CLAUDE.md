@@ -70,6 +70,12 @@ to prevent a forged higher-priority attribution header from overriding a CN addr
 Production nginx must overwrite CF-Connecting-IP with its resolved client address;
 lander proxies must overwrite X-Real-IP. Keep backend access loopback-only and
 campaign responses uncached. Unknown GeoIP locations retain normal routing.
+CN click/pageview/recording rows are excluded from all traffic lists, counters,
+charts, attribution, search/AI reports and top-site digests, including historical rows.
+Keep raw history and conversion accounting intact; filter individual rows, not
+entire visitor identities. Unknown countries remain visible. Pixel/record ingestion
+uses the same early request guard, and inbox workers discard queued CN events
+before inserts, fingerprint backfill or notifications.
 This policy covers tracker campaign responses, not links that bypass the tracker
 or visitors using a VPN outside China.
 

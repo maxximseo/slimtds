@@ -127,7 +127,7 @@ final class ClickRepository
         $row = $this->db->fetchOne(
             "SELECT referer
              FROM stats.pixel_events
-             WHERE visitor_uuid = :v AND created_at >= now() - make_interval(days => :days)
+             WHERE LOWER(country) IS DISTINCT FROM 'cn' AND visitor_uuid = :v AND created_at >= now() - make_interval(days => :days)
              ORDER BY created_at ASC
              LIMIT 1",
             ['v' => $visitorUuid, 'days' => $sinceDays],
@@ -149,11 +149,11 @@ final class ClickRepository
             "WITH p AS (
                 SELECT count(*) AS n, min(created_at) AS first_seen
                 FROM stats.pixel_events
-                WHERE visitor_uuid = :v AND created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(country) IS DISTINCT FROM 'cn' AND visitor_uuid = :v AND created_at >= now() - make_interval(days => :days)
              ), c AS (
                 SELECT count(*) AS n, min(created_at) AS first_seen
                 FROM stats.clicks
-                WHERE visitor_uuid = :v AND created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(country) IS DISTINCT FROM 'cn' AND visitor_uuid = :v AND created_at >= now() - make_interval(days => :days)
              ), v AS (
                 SELECT count(*) AS n
                 FROM core.conversions cv JOIN stats.clicks ck ON ck.id = cv.click_id
@@ -186,7 +186,7 @@ final class ClickRepository
         $row = $this->db->fetchOne(
             "SELECT referer
              FROM stats.pixel_events
-             WHERE fp_js = :fp AND created_at >= now() - make_interval(days => :days)
+             WHERE LOWER(country) IS DISTINCT FROM 'cn' AND fp_js = :fp AND created_at >= now() - make_interval(days => :days)
              ORDER BY created_at ASC
              LIMIT 1",
             ['fp' => $fpJs, 'days' => $sinceDays],
@@ -207,11 +207,11 @@ final class ClickRepository
             "WITH p AS (
                 SELECT count(*) AS n, min(created_at) AS first_seen
                 FROM stats.pixel_events
-                WHERE fp_js = :fp AND created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(country) IS DISTINCT FROM 'cn' AND fp_js = :fp AND created_at >= now() - make_interval(days => :days)
              ), c AS (
                 SELECT count(*) AS n, min(created_at) AS first_seen
                 FROM stats.clicks
-                WHERE fp_js = :fp AND created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(country) IS DISTINCT FROM 'cn' AND fp_js = :fp AND created_at >= now() - make_interval(days => :days)
              ), v AS (
                 SELECT count(*) AS n
                 FROM core.conversions cv JOIN stats.clicks ck ON ck.id = cv.click_id
@@ -247,7 +247,7 @@ final class ClickRepository
                        NULL::uuid AS click_id, NULL::text AS slug, NULL::text AS lander_host,
                        NULL::text AS lander_button, NULL::text AS offer, NULL::text AS status, NULL::numeric AS payout
                 FROM stats.pixel_events p
-                WHERE p.fp_js = :fp AND p.created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(p.country) IS DISTINCT FROM 'cn' AND p.fp_js = :fp AND p.created_at >= now() - make_interval(days => :days)
              )
              UNION ALL
              (
@@ -258,7 +258,7 @@ final class ClickRepository
                 FROM stats.clicks c
                 LEFT JOIN core.campaigns cmp ON cmp.id = c.campaign_id
                 LEFT JOIN core.offers o ON o.id = c.offer_id
-                WHERE c.fp_js = :fp AND c.created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.fp_js = :fp AND c.created_at >= now() - make_interval(days => :days)
              )
              UNION ALL
              (
@@ -294,7 +294,7 @@ final class ClickRepository
                        NULL::uuid AS click_id, NULL::text AS slug, NULL::text AS lander_host,
                        NULL::text AS lander_button, NULL::text AS offer, NULL::text AS status, NULL::numeric AS payout
                 FROM stats.pixel_events p
-                WHERE p.visitor_uuid = :v AND p.created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(p.country) IS DISTINCT FROM 'cn' AND p.visitor_uuid = :v AND p.created_at >= now() - make_interval(days => :days)
              )
              UNION ALL
              (
@@ -305,7 +305,7 @@ final class ClickRepository
                 FROM stats.clicks c
                 LEFT JOIN core.campaigns cmp ON cmp.id = c.campaign_id
                 LEFT JOIN core.offers o ON o.id = c.offer_id
-                WHERE c.visitor_uuid = :v AND c.created_at >= now() - make_interval(days => :days)
+                WHERE LOWER(c.country) IS DISTINCT FROM 'cn' AND c.visitor_uuid = :v AND c.created_at >= now() - make_interval(days => :days)
              )
              UNION ALL
              (
@@ -373,7 +373,7 @@ final class ClickRepository
      */
     private function filterConditionsNoTime(array $filters): array
     {
-        $cond = [];
+        $cond = ["LOWER(c.country) IS DISTINCT FROM 'cn'"];
         $params = [];
         if (!empty($filters['campaign_id'])) {
             $cond[] = 'c.campaign_id = :cid';

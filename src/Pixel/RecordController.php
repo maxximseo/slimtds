@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Pixel;
 
 use App\Admin\Repository\CampaignRepository;
+use App\Engine\CountryBlock;
 use App\Shared\Db\Connection;
 use App\Shared\Http\PixelCors;
 use App\Shared\RealIp;
@@ -32,6 +33,7 @@ final class RecordController
     public function __construct(
         private readonly CampaignRepository $campaigns,
         private readonly Connection $db,
+        private readonly CountryBlock $countryBlock,
     ) {}
 
     public function preflight(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -41,6 +43,10 @@ final class RecordController
 
     public function __invoke(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
+        if ($this->countryBlock->blocks($request)) {
+            return \App\Shared\Http\PixelCors::apply($request, $response->withStatus(204));
+        }
+
         $raw = (string)$request->getBody();
         if (strlen($raw) > self::MAX_BYTES) {
             return PixelCors::apply($request, $response->withStatus(204)); // drop oversized

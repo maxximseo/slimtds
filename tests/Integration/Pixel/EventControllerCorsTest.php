@@ -22,6 +22,7 @@ beforeEach(function (): void {
         $this->cRepo,
         new VisitorResolver($this->db),
         $this->db,
+        new \App\Engine\CountryBlock(new \App\Engine\GeoLookup(dirname(__DIR__, 2) . "/Fixtures/GeoIP")),
     );
     $this->camp = $this->cRepo->create(['name' => 'PX', 'slug' => 'px0001', 'is_active' => '1']);
 });

@@ -26,6 +26,7 @@ final class ClickHandler
         private readonly VisitorResolver $visitor,
         private readonly DeviceDetector $device,
         private readonly GeoLookup $geo,
+        private readonly CountryBlock $countryBlock,
         private readonly BotDetector $bot,
         private readonly FlowMatcher $matcher,
         private readonly OfferPicker $picker,
@@ -42,7 +43,7 @@ final class ClickHandler
         $response = $response->withHeader('Cache-Control', 'private, no-store, max-age=0');
         $ctx = $this->buildContext($request, $slug);
         $this->geo->lookup($ctx);
-        if ($this->isBlockedCountry($request, $ctx)) {
+        if ($this->countryBlock->blocks($request, $ctx)) {
             $response->getBody()->write('<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;min-height:100%;background:#000}</style></head><body></body></html>');
             return $response
                 ->withStatus(200)
@@ -123,23 +124,6 @@ final class ClickHandler
         return $resp;
     }
 
-    private function isBlockedCountry(ServerRequestInterface $request, Context $ctx): bool
-    {
-        if ($ctx->country === 'cn') return true;
-
-        // The tracker nginx overwrites CF-Connecting-IP; lander proxies overwrite
-        // X-Real-IP. Check both so a forged higher-priority analytics IP cannot bypass CN.
-        foreach (['X-Real-IP', 'CF-Connecting-IP'] as $header) {
-            $ip = trim($request->getHeaderLine($header));
-            if ($ip === $ctx->ip || !filter_var($ip, FILTER_VALIDATE_IP)) continue;
-            $peer = new Context($ip, $ctx->userAgent, $ctx->campaignSlug, $ctx->timestamp);
-            $this->geo->lookup($peer);
-            if ($peer->country === 'cn') return true;
-        }
-
-        return false;
-    }
-
     /**
      * Look up the most recent FingerprintJS visitor id for this visitor_uuid.
      * One indexed read against (visitor_uuid, created_at DESC) — sub-ms.
@@ -151,7 +135,7 @@ final class ClickHandler
         try {
             $val = $this->db->fetchScalar(
                 "SELECT fp_js FROM stats.pixel_events
-                 WHERE visitor_uuid = :v AND fp_js IS NOT NULL
+                 WHERE LOWER(country) IS DISTINCT FROM 'cn' AND visitor_uuid = :v AND fp_js IS NOT NULL
                    AND created_at >= now() - interval '30 days'
                  ORDER BY created_at DESC LIMIT 1",
                 ['v' => $visitorUuid],
@@ -361,7 +345,7 @@ final class ClickHandler
             $row = $this->db->fetchOne(
                 "SELECT referer, page_url, created_at
                  FROM stats.pixel_events
-                 WHERE visitor_uuid = :v
+                 WHERE LOWER(country) IS DISTINCT FROM 'cn' AND visitor_uuid = :v
                    AND created_at >= now() - interval '24 hours'
                    AND {$frag}
                  ORDER BY created_at ASC

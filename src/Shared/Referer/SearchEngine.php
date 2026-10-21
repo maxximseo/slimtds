@@ -134,7 +134,7 @@ final class SearchEngine
         return "COALESCE((
             SELECT pe.referer
             FROM stats.pixel_events pe
-            WHERE pe.visitor_uuid = {$clickAlias}.visitor_uuid
+            WHERE LOWER(pe.country) IS DISTINCT FROM 'cn' AND pe.visitor_uuid = {$clickAlias}.visitor_uuid
               AND pe.created_at >= {$clickAlias}.created_at - interval '24 hours'
               AND pe.created_at <= {$clickAlias}.created_at + interval '5 minutes'
             ORDER BY pe.created_at DESC

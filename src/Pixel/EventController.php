@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Pixel;
 
 use App\Admin\Repository\CampaignRepository;
+use App\Engine\CountryBlock;
 use App\Engine\Context;
 use App\Engine\VisitorResolver;
 use App\Shared\Db\Connection;
@@ -39,6 +40,7 @@ final class EventController
         private readonly CampaignRepository $campaigns,
         private readonly VisitorResolver $visitorResolver,
         private readonly Connection $db,
+        private readonly CountryBlock $countryBlock,
     ) {}
 
     private function withCors(ServerRequestInterface $request, ResponseInterface $r): ResponseInterface
@@ -53,6 +55,10 @@ final class EventController
 
     public function __invoke(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
+        if ($this->countryBlock->blocks($request)) {
+            return \App\Shared\Http\PixelCors::apply($request, $response->withStatus(204));
+        }
+
         // ── Parse JSON body ──────────────────────────────────────────────
         $contentType = $request->getHeaderLine('Content-Type');
         if (str_contains($contentType, 'application/json')) {

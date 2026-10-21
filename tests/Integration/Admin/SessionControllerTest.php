@@ -19,6 +19,7 @@ beforeEach(function (): void {
         $this->pdo->exec("TRUNCATE {$r}");
     }
     $this->db = new Connection($this->pdo);
+    $this->pdo->exec('DELETE FROM stats.rrweb_sessions');
     (new Partitions($this->pdo))->ensureDailyAhead(1);
     $this->pdo->exec('DELETE FROM core.campaigns');
     $camp = (new CampaignRepository($this->db, new CampaignIdGenerator()))
@@ -29,6 +30,11 @@ beforeEach(function (): void {
         "INSERT INTO stats.rrweb_chunks (session_id, campaign_id, seq, payload, created_at)
          VALUES (:s, :c, 0, decode(:b,'base64'), now())",
         ['s' => $this->sid, 'c' => $camp->id, 'b' => $gz],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.rrweb_sessions (session_id, campaign_id, started_at, last_at)
+         VALUES (:s, :c, now(), now())",
+        ['s' => $this->sid, 'c' => $camp->id],
     );
     $this->ctrl = new SessionController(
         new RrwebSessionRepository($this->db),

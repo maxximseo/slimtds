@@ -18,7 +18,7 @@ final class PixelEventRepository
             "SELECT id, visitor_uuid, fp_js, event_name, page_url, host(ip) AS ip,
                     country, city, asn, screen_w, screen_h, timezone, lang, props, created_at
              FROM stats.pixel_events
-             WHERE campaign_id = :c
+             WHERE LOWER(country) IS DISTINCT FROM 'cn' AND campaign_id = :c
                AND created_at >= now() - interval '7 days'
              ORDER BY created_at DESC
              LIMIT :lim",
@@ -35,7 +35,7 @@ final class PixelEventRepository
                 count(*) FILTER (WHERE created_at >= now() - interval '7 days')    AS w,
                 count(*) FILTER (WHERE created_at >= now() - interval '30 days')   AS m
              FROM stats.pixel_events
-             WHERE campaign_id = :c",
+             WHERE LOWER(country) IS DISTINCT FROM 'cn' AND campaign_id = :c",
             ['c' => $campaignId],
         ) ?? ['d' => 0, 'w' => 0, 'm' => 0];
         return [
@@ -185,7 +185,7 @@ final class PixelEventRepository
      */
     public function hourlyTimeline(array $filters): array
     {
-        $cond   = [];
+        $cond   = ["LOWER(pe.country) IS DISTINCT FROM 'cn'"];
         $params = [];
 
         if (!empty($filters['campaign_id'])) {
@@ -208,7 +208,7 @@ final class PixelEventRepository
             }
         }
 
-        $extra = $cond ? ' AND ' . implode(' AND ', $cond) : '';
+        $extra = ' AND ' . implode(' AND ', $cond);
 
         $rows = $this->db->fetchAll(
             <<<SQL
@@ -255,7 +255,7 @@ final class PixelEventRepository
      */
     private function buildWhere(array $filters): array
     {
-        $cond   = [];
+        $cond   = ["LOWER(pe.country) IS DISTINCT FROM 'cn'"];
         $params = [];
 
         if (!empty($filters['campaign_id'])) {
@@ -302,7 +302,7 @@ final class PixelEventRepository
             $cond[] = "pe.created_at >= now() - interval '7 days'";
         }
 
-        $where = $cond ? 'WHERE ' . implode(' AND ', $cond) : '';
+        $where = 'WHERE ' . implode(' AND ', $cond);
         return [$where, $params];
     }
 }
