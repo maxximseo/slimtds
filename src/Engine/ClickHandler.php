@@ -39,17 +39,28 @@ final class ClickHandler
 
     public function handle(ServerRequestInterface $request, ResponseInterface $response, string $slug): ResponseInterface
     {
+        $response = $response->withHeader('Cache-Control', 'private, no-store, max-age=0');
+        $ctx = $this->buildContext($request, $slug);
+        $this->geo->lookup($ctx);
+        if ($this->isBlockedCountry($request, $ctx)) {
+            $response->getBody()->write('<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;min-height:100%;background:#000}</style></head><body></body></html>');
+            return $response
+                ->withStatus(200)
+                ->withoutHeader('Location')
+                ->withoutHeader('Refresh')
+                ->withHeader('Content-Type', 'text/html; charset=utf-8')
+                ->withHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+                ->withHeader('X-Robots-Tag', 'noindex, nofollow');
+        }
+
         $campaign = $this->campaigns->findBySlug($slug);
         if ($campaign === null || !$campaign->isActive) {
             return $this->trash($campaign, '', $response);
         }
 
-        $ctx = $this->buildContext($request, $slug);
-
         $needCookie = $this->visitor->resolve($request, $ctx);
         $ctx->fpJs = $this->resolveFpJs($ctx->visitorUuid);
         $this->device->detect($ctx, $request->getHeaderLine('Accept-Language'));
-        $this->geo->lookup($ctx);
         $this->bot->detect($ctx);
 
         $flow = $this->matcher->match($campaign->id, $ctx);
@@ -110,6 +121,23 @@ final class ClickHandler
             $resp = $this->visitor->attachCookie($resp, $ctx->visitorUuid, $request->getUri()->getScheme() === 'https');
         }
         return $resp;
+    }
+
+    private function isBlockedCountry(ServerRequestInterface $request, Context $ctx): bool
+    {
+        if ($ctx->country === 'cn') return true;
+
+        // The tracker nginx overwrites CF-Connecting-IP; lander proxies overwrite
+        // X-Real-IP. Check both so a forged higher-priority analytics IP cannot bypass CN.
+        foreach (['X-Real-IP', 'CF-Connecting-IP'] as $header) {
+            $ip = trim($request->getHeaderLine($header));
+            if ($ip === $ctx->ip || !filter_var($ip, FILTER_VALIDATE_IP)) continue;
+            $peer = new Context($ip, $ctx->userAgent, $ctx->campaignSlug, $ctx->timestamp);
+            $this->geo->lookup($peer);
+            if ($peer->country === 'cn') return true;
+        }
+
+        return false;
     }
 
     /**

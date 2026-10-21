@@ -39,7 +39,7 @@ beforeEach(function (): void {
         $cRepo, $oRepo,
         new VisitorResolver($this->db),
         new DeviceDetector(),
-        new GeoLookup(),
+        new GeoLookup(dirname(__DIR__, 2) . '/Fixtures/GeoIP'),
         new BotDetector($this->db),
         new FlowMatcher($fRepo, $compiler),
         new OfferPicker(),
@@ -155,3 +155,70 @@ test('Set-Cookie vu attached on first visit', function (): void {
     expect($setCookie)->toContain('vu=');
     expect($setCookie)->toContain('Path=/');
 });
+
+test('China gets only a black page before campaign routing or tracking', function (array $headers): void {
+    $req = (new ServerRequestFactory())->createServerRequest('GET', '/clkt01');
+    foreach ($headers as $name => $value) {
+        $req = $req->withHeader($name, $value);
+    }
+    $resp = $this->handler->handle($req, new Response(), 'clkt01');
+    expect($resp->getStatusCode())->toBe(200);
+    expect($resp->getHeaderLine('Location'))->toBe('');
+    expect($resp->getHeaderLine('Refresh'))->toBe('');
+    expect($resp->getHeaderLine('Set-Cookie'))->toBe('');
+    expect($resp->getHeaderLine('Cache-Control'))->toContain('no-store');
+    expect($resp->getHeaderLine('Content-Security-Policy'))->toContain("default-src 'none'");
+    $html = (string)$resp->getBody();
+    expect($html)->toContain('background:#000');
+    expect($html)->not->toMatch('/<script|<iframe|href=|http-equiv=["\']refresh/i');
+    expect((int)$this->db->fetchScalar('SELECT count(*) FROM stats.clicks'))->toBe(0);
+    expect((int)$this->db->fetchScalar('SELECT count(*) FROM stats.visitors_fingerprints'))->toBe(0);
+})->with([
+    'effective IP' => [['X-Real-IP' => '175.16.199.1']],
+    'nginx IP defeats forged analytics headers' => [[
+        'X-Slim-IP' => '81.2.69.142',
+        'X-Real-IP' => '81.2.69.142',
+        'X-Forwarded-For' => '81.2.69.142',
+        'CF-Connecting-IP' => '175.16.199.1',
+    ]],
+    'lander IP defeats forged higher-priority IP' => [[
+        'X-Slim-IP' => '81.2.69.142',
+        'X-Real-IP' => '175.16.199.1',
+        'CF-Connecting-IP' => '81.2.69.142',
+    ]],
+]);
+
+test('China cannot reach a redirect fallback', function (): void {
+    $this->db->execute('DELETE FROM core.flows');
+    $this->db->execute(
+        'UPDATE core.campaigns SET trash_mode = 1, trash_url = :url WHERE id = :id',
+        ['url' => 'https://fallback.example/', 'id' => $this->camp->id],
+    );
+    $req = (new ServerRequestFactory())->createServerRequest('GET', '/clkt01')
+        ->withHeader('CF-Connecting-IP', '175.16.199.1');
+    $resp = $this->handler->handle($req, new Response(), 'clkt01');
+    expect($resp->getStatusCode())->toBe(200);
+    expect($resp->getHeaderLine('Location'))->toBe('');
+    expect((string)$resp->getBody())->toContain('background:#000');
+});
+
+test('China is blocked for new inactive and unknown campaign slugs', function (string $slug): void {
+    $cRepo = new CampaignRepository($this->db, new CampaignIdGenerator());
+    $cRepo->create(['name' => 'New campaign', 'slug' => 'newcn01', 'is_active' => '1']);
+    $this->db->execute('UPDATE core.campaigns SET is_active = false WHERE id = :id', ['id' => $this->camp->id]);
+    $req = (new ServerRequestFactory())->createServerRequest('GET', '/' . $slug)
+        ->withHeader('CF-Connecting-IP', '175.16.199.1');
+    $resp = $this->handler->handle($req, new Response(), $slug);
+    expect($resp->getStatusCode())->toBe(200);
+    expect($resp->getHeaderLine('Location'))->toBe('');
+    expect((string)$resp->getBody())->toContain('background:#000');
+})->with(['newcn01', 'clkt01', 'missing']);
+
+test('non-China and unknown geolocation keep normal routing', function (string $ip): void {
+    $req = (new ServerRequestFactory())->createServerRequest('GET', '/clkt01')
+        ->withHeader('X-Real-IP', $ip)
+        ->withHeader('CF-Connecting-IP', $ip);
+    $resp = $this->handler->handle($req, new Response(), 'clkt01');
+    expect($resp->getStatusCode())->toBe(302);
+    expect($resp->getHeaderLine('Location'))->toStartWith('https://example.com/');
+})->with(['81.2.69.142', '192.168.1.1']);
