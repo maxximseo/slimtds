@@ -145,7 +145,7 @@ final class StatsRepository
      * Hourly AI-clicks digest source: unique non-bot visitors per AI engine
      * with a per-campaign breakdown, engines sorted by clicks desc.
      *
-     * @return list<array{engine:string, clicks:int, campaigns:list<array{slug:string, clicks:int}>}>
+     * @return list<array{engine:string, clicks:int, campaigns:list<array{slug:string, clicks:int}>, sites:list<array{host:string, clicks:int}>}>
      */
     public function aiClicksBreakdown(string $sinceIso): array
     {
@@ -172,9 +172,33 @@ final class StatsRepository
                 'slug'   => (string)($r['slug'] ?? '(no campaign)'),
                 'clicks' => (int)$r['clicks'],
             ], $campaignRows);
+            // utm_source of our /out/ gate is the lander host the click came
+            // from — that is the site address the operator wants to see.
+            $siteRows = $this->db->fetchAll(
+                "SELECT c.utm_source AS host, count(DISTINCT c.visitor_uuid)::int AS clicks
+                 FROM stats.clicks c
+                 WHERE c.created_at >= :since
+                   AND c.is_bot = false
+                   AND c.utm_source IS NOT NULL
+                   AND c.utm_source <> ''
+                   AND {$refWhere}
+                 GROUP BY c.utm_source
+                 ORDER BY clicks DESC
+                 LIMIT 5",
+                ['since' => $sinceIso] + $refParams,
+            );
+            $sites = array_map(static fn ($r) => [
+                'host'   => (string)$r['host'],
+                'clicks' => (int)$r['clicks'],
+            ], $siteRows);
             $total = array_sum(array_column($campaigns, 'clicks'));
             if ($total > 0) {
-                $rows[] = ['engine' => $engine, 'clicks' => $total, 'campaigns' => $campaigns];
+                $rows[] = [
+                    'engine'    => $engine,
+                    'clicks'    => $total,
+                    'campaigns' => $campaigns,
+                    'sites'     => $sites,
+                ];
             }
         }
         usort($rows, static fn ($a, $b) => $b['clicks'] <=> $a['clicks']);

@@ -206,3 +206,34 @@ test('ai clicks breakdown groups unique visitors by engine with campaign detail 
         ->and($rows['duck_ai']['clicks'])->toBe(1)
         ->and(isset($rows['google']))->toBeFalse();
 });
+
+test('ai clicks breakdown lists lander hosts from utm_source', function (): void {
+    $campaign = '00000000-0000-7000-8000-000000000010';
+
+    $this->db->execute(
+        "INSERT INTO core.campaigns (id, slug, name, is_active)
+         VALUES (:campaign, 'spsafrica', 'SPS Africa', true)
+         ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name",
+        ['campaign' => $campaign],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, referer, utm_source, is_bot, created_at)
+         VALUES
+            (:campaign, '00000000-0000-7000-8000-000000000051', '1.1.1.1', 'https://chatgpt.com/share/a', 'site-paris-sportifs-cotedivoire.com', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000052', '1.1.1.2', 'https://chatgpt.com/share/b', 'site-paris-sportifs-cotedivoire.com', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000053', '1.1.1.3', 'https://chatgpt.com/share/c', 'site-paris-sportifs-cameroun.com', false, now())",
+        ['campaign' => $campaign],
+    );
+
+    $rows = array_column(
+        $this->repo->aiClicksBreakdown(date('c', time() - 3600)),
+        null,
+        'engine',
+    );
+
+    expect($rows['chatgpt']['clicks'])->toBe(3)
+        ->and($rows['chatgpt']['sites'][0]['host'])->toBe('site-paris-sportifs-cotedivoire.com')
+        ->and($rows['chatgpt']['sites'][0]['clicks'])->toBe(2)
+        ->and($rows['chatgpt']['sites'][1]['host'])->toBe('site-paris-sportifs-cameroun.com')
+        ->and($rows['chatgpt']['sites'][1]['clicks'])->toBe(1);
+});

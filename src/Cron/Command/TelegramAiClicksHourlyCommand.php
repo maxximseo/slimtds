@@ -55,6 +55,13 @@ final class TelegramAiClicksHourlyCommand extends Command
                 $row['campaigns'],
             ));
             $lines[] = sprintf('<b>%s</b> — %d · %s', $row['engine'], $row['clicks'], $campaigns);
+            if ($row['sites'] !== []) {
+                $sites = implode(', ', array_map(
+                    static fn ($s) => sprintf('%s %d', $s['host'], $s['clicks']),
+                    $row['sites'],
+                ));
+                $lines[] = sprintf('сайты: %s', $sites);
+            }
         }
 
         $sent = $this->tg->send(implode("\n", $lines));
