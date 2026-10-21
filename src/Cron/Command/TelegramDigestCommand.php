@@ -10,6 +10,7 @@ use App\Stats\StatsRepository;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
 #[AsCommand(name: 'telegram:digest', description: 'Send daily stats digest to Telegram')]
@@ -23,6 +24,11 @@ final class TelegramDigestCommand extends Command
         parent::__construct();
     }
 
+    protected function configure(): void
+    {
+        $this->addOption('dry-run', null, InputOption::VALUE_NONE, 'Print the digest without sending it');
+    }
+
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         // Daily digest is a prod ops signal — dev stacks share the same .env
@@ -34,7 +40,7 @@ final class TelegramDigestCommand extends Command
             return self::SUCCESS;
         }
 
-        if (!$this->tg->isConfigured()) {
+        if (!$input->getOption('dry-run') && !$this->tg->isConfigured()) {
             $output->writeln('telegram:digest skip — notifier not configured');
             return self::SUCCESS;
         }
@@ -169,6 +175,20 @@ final class TelegramDigestCommand extends Command
             }
         }
 
+        $siteRows = $this->stats->searchSiteBreakdown(null, $since);
+        if ($siteRows !== []) {
+            $lines[] = '';
+            $lines[] = '<b>Топ 10 сайтов — уникальные посетители из поиска за 24 ч:</b>';
+            foreach ($siteRows as $i => $row) {
+                $lines[] = sprintf(
+                    '%d. <b>%s</b> — %d',
+                    $i + 1,
+                    htmlspecialchars($row['site'] !== '' ? $row['site'] : 'Сайт не определён', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
+                    $row['clicks'],
+                );
+            }
+        }
+
         if ($offerRows !== []) {
             usort($offerRows, static fn ($a, $b) =>
                 $b['all_epc'] <=> $a['all_epc']
@@ -198,6 +218,10 @@ final class TelegramDigestCommand extends Command
         }
 
         $msg = implode("\n", $lines);
+        if ($input->getOption('dry-run')) {
+            $output->writeln($msg, OutputInterface::OUTPUT_RAW);
+            return self::SUCCESS;
+        }
         $sent = $this->tg->send($msg);
 
         if ($sent) {

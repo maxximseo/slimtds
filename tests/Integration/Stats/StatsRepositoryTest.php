@@ -206,3 +206,88 @@ test('ai clicks breakdown groups unique visitors by engine with campaign detail 
         ->and($rows['duck_ai']['clicks'])->toBe(1)
         ->and(isset($rows['google']))->toBeFalse();
 });
+
+test('search sites deduplicate visitors across pages and campaigns without counting bots or direct clicks', function (): void {
+    $campaign = '00000000-0000-7000-8000-000000000010';
+    $other = '00000000-0000-7000-8000-000000000020';
+    $visitor = '00000000-0000-7000-8000-000000000051';
+    $this->db->execute(
+        "INSERT INTO stats.pixel_events (campaign_id, visitor_uuid, page_url, referer, created_at)
+         VALUES (:campaign, :visitor, 'https://pixel.test/page', 'https://www.google.com/search?q=ice', now())",
+        ['campaign' => $campaign, 'visitor' => $visitor],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, lander_host, referer, is_bot, created_at)
+         VALUES
+            (:campaign, :visitor, '1.1.1.1', NULL, 'https://WWW.Site.Test/one', false, now()),
+            (:other, :visitor, '1.1.1.1', NULL, 'https://site.test/two', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000052', '1.1.1.2', 'site.test', 'https://www.bing.com/search?q=ice', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000053', '1.1.1.3', 'bot.test', 'https://www.google.com/search?q=ice', true, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000054', '1.1.1.4', 'direct.test', 'https://direct.test/', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000055', '1.1.1.5', 'old.test', 'https://www.google.com/search?q=ice', false, now() - interval '2 days')",
+        ['campaign' => $campaign, 'other' => $other, 'visitor' => $visitor],
+    );
+    $since = date('c', time() - 3600);
+    expect($this->repo->searchSiteBreakdown(null, $since))->toBe([['site' => 'site.test', 'clicks' => 2]])
+        ->and($this->repo->searchSiteBreakdown($other, $since))->toBe([['site' => 'site.test', 'clicks' => 1]]);
+});
+
+test('search sites use the same-campaign pixel page when click site is missing and label unknown sites honestly', function (): void {
+    $campaign = '00000000-0000-7000-8000-000000000010';
+    $visitor = '00000000-0000-7000-8000-000000000061';
+    $this->db->execute(
+        "INSERT INTO stats.pixel_events (campaign_id, visitor_uuid, page_url, referer, created_at)
+         VALUES
+            (:campaign, :visitor, 'https://www.pixel.test/page?x=1', 'https://www.google.com/search?q=ice', now() - interval '1 minute'),
+            ('00000000-0000-7000-8000-000000000020', :visitor, 'https://wrong.test/', 'https://www.google.com/search?q=ice', now())",
+        ['campaign' => $campaign, 'visitor' => $visitor],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, lander_host, referer, is_bot, created_at)
+         VALUES
+            (:campaign, :visitor, '1.1.1.1', ' ', 'https://www.google.com/search?q=ice', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000062', '1.1.1.2', NULL, 'https://www.bing.com/search?q=ice', false, now())",
+        ['campaign' => $campaign, 'visitor' => $visitor],
+    );
+    expect($this->repo->searchSiteBreakdown(null, date('c', time() - 3600)))->toBe([
+        ['site' => '', 'clicks' => 1],
+        ['site' => 'pixel.test', 'clicks' => 1],
+    ]);
+});
+
+test('search site ranking returns ten sites with a stable order for equal counts', function (): void {
+    for ($i = 1; $i <= 12; $i++) {
+        $this->db->execute(
+            "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, lander_host, referer, is_bot, created_at)
+             VALUES ('00000000-0000-7000-8000-000000000010', :visitor, '1.1.1.1', :host, 'https://www.google.com/search?q=ice', false, now())",
+            ['visitor' => sprintf('00000000-0000-7000-8000-%012d', $i), 'host' => sprintf('site%02d.test', $i)],
+        );
+    }
+    $rows = $this->repo->searchSiteBreakdown(null, date('c', time() - 3600));
+    expect($rows)->toHaveCount(10)
+        ->and($rows[0])->toBe(['site' => 'site01.test', 'clicks' => 1])
+        ->and($rows[9])->toBe(['site' => 'site10.test', 'clicks' => 1]);
+});
+
+test('digest preview renders unique site counts and escapes HTML without sending Telegram', function (): void {
+    $this->db->execute(
+        "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, lander_host, referer, is_bot, created_at)
+         VALUES ('00000000-0000-7000-8000-000000000010', '00000000-0000-7000-8000-000000000071', '1.1.1.1', 'site<&>.test', 'https://www.google.com/search?q=ice', false, now())",
+    );
+    $before = $_ENV['APP_ENV'];
+    $_ENV['APP_ENV'] = 'prod';
+    try {
+        $command = new App\Cron\Command\TelegramDigestCommand(
+            new App\Shared\Telegram\TelegramNotifier(null, null),
+            $this->repo,
+            new App\Admin\Repository\CampaignRepository($this->db, new App\Shared\CampaignIdGenerator()),
+        );
+        $tester = new Symfony\Component\Console\Tester\CommandTester($command);
+        $tester->execute(['--dry-run' => true]);
+        expect($tester->getStatusCode())->toBe(0)
+            ->and($tester->getDisplay())->toContain('Топ 10 сайтов', 'site&lt;&amp;&gt;.test</b> — 1', 'Unique search visitors: <b>1</b>')
+            ->and($tester->getDisplay())->not->toContain('telegram:digest sent');
+    } finally {
+        $_ENV['APP_ENV'] = $before;
+    }
+});

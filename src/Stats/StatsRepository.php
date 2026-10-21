@@ -96,6 +96,45 @@ final class StatsRepository
         return $this->engineSummary($refWhere, $refParams, $campaignId, $sinceIso);
     }
 
+    /** @return list<array{site:string, clicks:int}> */
+    public function searchSiteBreakdown(?string $campaignId, string $sinceIso): array
+    {
+        [$refWhere, $refParams] = SearchEngine::sqlFilterCompact(
+            'any', SearchEngine::clickEntryRefererSql('c'), 'search',
+        );
+        [$directWhere, $directParams] = SearchEngine::sqlFilterCompact('any', 'c.referer', 'direct');
+        $campaignWhere = $campaignId !== null ? 'AND c.campaign_id = :cid' : '';
+        $params = ['since' => $sinceIso] + $refParams + $directParams;
+        if ($campaignId !== null) {
+            $params['cid'] = $campaignId;
+        }
+        $rows = $this->db->fetchAll(
+            "WITH sites AS (
+                SELECT c.visitor_uuid, COALESCE(
+                    NULLIF(trim(c.lander_host), ''),
+                    CASE WHEN NOT ({$directWhere}) THEN
+                        substring(c.referer from '(?i)^https?://([^/:?#]+)') END,
+                    (SELECT substring(pe.page_url from '(?i)^https?://([^/:?#]+)')
+                     FROM stats.pixel_events pe
+                     WHERE pe.visitor_uuid = c.visitor_uuid
+                       AND pe.campaign_id = c.campaign_id
+                       AND pe.created_at >= c.created_at - interval '24 hours'
+                       AND pe.created_at <= c.created_at + interval '5 minutes'
+                     ORDER BY pe.created_at DESC LIMIT 1),
+                    ''
+                ) AS host
+                FROM stats.clicks c
+                WHERE c.created_at >= :since AND c.is_bot = false
+                  AND {$refWhere} {$campaignWhere}
+            )
+            SELECT regexp_replace(lower(host), '^www\\.', '') AS site,
+                   count(DISTINCT visitor_uuid)::int AS clicks
+            FROM sites GROUP BY site ORDER BY clicks DESC, site ASC LIMIT 10",
+            $params,
+        );
+        return array_map(static fn ($r) => ['site' => (string)$r['site'], 'clicks' => (int)$r['clicks']], $rows);
+    }
+
     /**
      * Same KPIs as searchSummary(), restricted to AI-assistant entry sources
      * (ChatGPT, Gemini, Perplexity, Copilot, Claude, ...).

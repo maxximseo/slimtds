@@ -154,6 +154,8 @@ TELEGRAM_CHAT_ID=-100xxxxxxxx
 
 The cron container will automatically start sending digests and alerts. To test immediately:
 
+The daily digest includes the top 10 referring sites by distinct non-bot search/AI visitors in the last 24 hours. Repeated clicks and page URLs on the same site count once per visitor; the same person may appear under several sites. Site attribution prefers `X-Lander-Host`, then the click's non-search referrer, then a nearby pixel page from the same campaign. Missing site information is shown explicitly. Use `php bin/console telegram:digest --dry-run` inside the production container to preview the report without sending Telegram messages.
+
 ```bash
 docker compose exec app php bin/console telegram:digest
 docker compose exec app php bin/console telegram:alerts
