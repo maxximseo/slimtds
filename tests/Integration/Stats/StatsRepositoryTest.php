@@ -172,3 +172,37 @@ test('ai summary counts AI-assistant visitors separately from classic search eng
         ->and($breakdown['gemini'])->toBe(1)
         ->and($breakdown['copilot'] ?? 0)->toBe(0);
 });
+
+test('ai clicks breakdown groups unique visitors by engine with campaign detail and skips google', function (): void {
+    $campaign = '00000000-0000-7000-8000-000000000010';
+
+    $this->db->execute(
+        "INSERT INTO core.campaigns (id, slug, name, is_active)
+         VALUES (:campaign, 'aviator', 'Aviator', true)
+         ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name",
+        ['campaign' => $campaign],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, referer, is_bot, created_at)
+         VALUES
+            (:campaign, '00000000-0000-7000-8000-000000000041', '1.1.1.1', 'https://chatgpt.com/share/one', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000041', '1.1.1.1', 'https://chatgpt.com/share/one', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000042', '1.1.1.2', 'https://duck.ai/chat/two', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000043', '1.1.1.3', 'https://www.google.com/search?q=not-ai', false, now()),
+            (:campaign, '00000000-0000-7000-8000-000000000044', '1.1.1.4', 'https://chatgpt.com/share/bot', true, now())",
+        ['campaign' => $campaign],
+    );
+
+    $rows = array_column(
+        $this->repo->aiClicksBreakdown(date('c', time() - 3600)),
+        null,
+        'engine',
+    );
+
+    // duplicate visitor counted once, google excluded, bot excluded
+    expect($rows['chatgpt']['clicks'])->toBe(1)
+        ->and($rows['chatgpt']['campaigns'][0]['slug'])->toBe('aviator')
+        ->and($rows['chatgpt']['campaigns'][0]['clicks'])->toBe(1)
+        ->and($rows['duck_ai']['clicks'])->toBe(1)
+        ->and(isset($rows['google']))->toBeFalse();
+});

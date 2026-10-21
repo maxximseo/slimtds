@@ -230,9 +230,9 @@ final class InboxFlushCommand extends Command
      */
     private function sources(string $key): array
     {
-        // Default: every known AI assistant + Google, so AI-referral clicks
-        // notify out of the box; the settings row narrows the list if set.
-        $default = array_merge(SearchEngine::AI_ENGINES, ['google']);
+        // Default: every known AI assistant. Google is NOT an AI source and
+        // must never fire AI notifications; settings rows narrow the list.
+        $default = SearchEngine::AI_ENGINES;
         $raw = $this->settings->get($key, (string)json_encode($default));
         $decoded = json_decode($raw, true);
         if (!is_array($decoded)) return $default;
