@@ -35,33 +35,49 @@ final class TelegramAiClicksHourlyCommand extends Command
         }
 
         $since = date('Y-m-d\TH:i:sP', strtotime('-1 hour'));
-        $rows = $this->stats->aiClicksBreakdown($since);
-        if ($rows === []) {
+        $visitors = $this->stats->aiClicksVisitors($since);
+        if ($visitors === []) {
             // Silence when there is nothing to tell — a zero-click hourly
             // message is spam, not a signal.
             $output->writeln('telegram:ai-clicks-hourly — no AI clicks in the last hour, nothing sent');
             return self::SUCCESS;
         }
 
-        $total = array_sum(array_column($rows, 'clicks'));
+        $byEngine = [];
+        foreach ($visitors as $v) {
+            $byEngine[$v['engine']][] = $v;
+        }
+        uasort($byEngine, static fn ($a, $b) => count($b) <=> count($a));
+
+        $total = count($visitors);
+        $appUrl = rtrim((string)($_ENV['APP_URL'] ?? 'https://slimtds.local'), '/');
         $lines = [
             sprintf('🤖 <b>AI clicks — последний час</b>'),
             sprintf('Всего из нейросетей: <b>%d</b>', $total),
-            '',
         ];
-        foreach ($rows as $row) {
-            $campaigns = implode(', ', array_map(
-                static fn ($c) => sprintf('%s %d', $c['slug'], $c['clicks']),
-                $row['campaigns'],
-            ));
-            $lines[] = sprintf('<b>%s</b> — %d · %s', $row['engine'], $row['clicks'], $campaigns);
-            if ($row['sites'] !== []) {
-                $sites = implode(', ', array_map(
-                    static fn ($s) => sprintf('%s %d', $s['host'], $s['clicks']),
-                    $row['sites'],
-                ));
-                $lines[] = sprintf('сайты: %s', $sites);
+        $shown = 0;
+        foreach ($byEngine as $engine => $group) {
+            $lines[] = '';
+            $lines[] = sprintf('<b>%s</b> — %d', $engine, count($group));
+            foreach ($group as $v) {
+                if ($shown >= 15) break 2;
+                $route = [];
+                if ($v['country'] !== '') $route[] = $v['country'];
+                if ($v['device'] !== '') $route[] = $v['device'];
+                $lines[] = sprintf('📄 %s', $v['site']);
+                $lines[] = sprintf(
+                    '🌍 %s%s👤 vu %s → %s',
+                    $route !== [] ? implode(' · ', $route) : '?',
+                    ' · ',
+                    substr($v['visitor_uuid'], 0, 8),
+                    $v['campaign'],
+                );
+                $lines[] = sprintf('%s/admin/clicks?click_id=%s', $appUrl, $v['click_id']);
+                $shown++;
             }
+        }
+        if ($total > $shown) {
+            $lines[] = sprintf('…и ещё %d', $total - $shown);
         }
 
         $sent = $this->tg->send(implode("\n", $lines));
