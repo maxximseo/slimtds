@@ -101,6 +101,7 @@ test('pixel lists campaign counters and independent timelines exclude China', fu
 });
 
 test('China recordings cannot be listed counted or replayed by direct session id', function (): void {
+    (new \App\Shared\Db\Partitions(pdo()))->ensureDailyAhead(1);
     $sid = '00000000-0000-7000-8000-000000000031';
     $this->db->execute(
         "INSERT INTO stats.rrweb_sessions (session_id, campaign_id, country, started_at, last_at)
