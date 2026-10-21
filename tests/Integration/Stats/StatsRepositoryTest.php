@@ -236,6 +236,8 @@ test('ai clicks breakdown lists lander hosts from utm_source', function (): void
         ->and($rows['chatgpt']['sites'][0]['clicks'])->toBe(2)
         ->and($rows['chatgpt']['sites'][1]['host'])->toBe('site-paris-sportifs-cameroun.com')
         ->and($rows['chatgpt']['sites'][1]['clicks'])->toBe(1);
+});
+
 test('search sites deduplicate visitors across pages and campaigns without counting bots or direct clicks', function (): void {
     $campaign = '00000000-0000-7000-8000-000000000010';
     $other = '00000000-0000-7000-8000-000000000020';
