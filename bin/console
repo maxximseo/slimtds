@@ -41,6 +41,7 @@ $commands = [
     App\Cron\Command\StatsRefreshCommand::class,
     App\Cron\Command\TelegramDigestCommand::class,
     App\Cron\Command\TelegramAlertsCommand::class,
+    App\Cron\Command\TelegramAiClicksHourlyCommand::class,
     App\Cron\Command\DbBackupCommand::class,
     App\Admin\Command\DbRestoreCommand::class,
     App\Cron\Command\PostbackDeliverCommand::class,
