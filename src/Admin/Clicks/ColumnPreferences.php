@@ -16,6 +16,7 @@ final class ColumnPreferences
         'campaign'     => ['label_key' => 'clicks.col.campaign',     'sortable' => 'cmp.slug',      'default' => true],
         'flow'         => ['label_key' => 'clicks.col.flow',         'sortable' => 'fl.name',       'default' => true],
         'offer'        => ['label_key' => 'clicks.col.offer',        'sortable' => null,            'default' => true],
+        'referer'      => ['label_key' => 'clicks.col.referer',      'sortable' => null,            'default' => true],
         'visitor'      => ['label_key' => 'clicks.col.visitor',      'sortable' => null,            'default' => false],
         'fp_js'        => ['label_key' => 'clicks.col.fp_js',        'sortable' => null,            'default' => false],
         'ip'           => ['label_key' => 'clicks.col.ip',           'sortable' => null,            'default' => true],
@@ -32,7 +33,9 @@ final class ColumnPreferences
         'bot_name'     => ['label_key' => 'clicks.col.bot_name',     'sortable' => null,            'default' => false],
         'is_uniq'      => ['label_key' => 'clicks.col.is_uniq',      'sortable' => null,            'default' => false],
         'ua'           => ['label_key' => 'clicks.col.ua',           'sortable' => null,            'default' => false],
-        'referer'      => ['label_key' => 'clicks.col.referer',      'sortable' => null,            'default' => false],
+        // Entry source recorded by the pixel — shown next to `referer`, not
+        // instead of it, and off by default so the stock view is unchanged.
+        'entry_referer' => ['label_key' => 'clicks.col.entry_referer', 'sortable' => null,          'default' => false],
         'utm_source'   => ['label_key' => 'clicks.col.utm_source',   'sortable' => null,            'default' => false],
         'utm_medium'   => ['label_key' => 'clicks.col.utm_medium',   'sortable' => null,            'default' => false],
         'utm_campaign' => ['label_key' => 'clicks.col.utm_campaign', 'sortable' => null,            'default' => false],
@@ -45,6 +48,7 @@ final class ColumnPreferences
 
     private const SESSION_KEY  = 'clicks.columns';
     private const SORT_KEY     = 'clicks.sort';
+    private const SOURCE_PAGE_ADDED_KEY = 'clicks.columns.source_page_added';
     private const DEFAULT_SORT = ['field' => 'time', 'dir' => 'desc'];
 
     /**
@@ -57,10 +61,19 @@ final class ColumnPreferences
         if (!is_array($stored) || empty($stored)) {
             return $this->defaults();
         }
-        return array_values(array_filter(
+        $visible = array_values(array_filter(
             $stored,
             static fn ($k) => is_string($k) && isset(self::COLUMNS[$k]),
         ));
+        if (!isset($_SESSION[self::SOURCE_PAGE_ADDED_KEY])) {
+            if (!in_array('referer', $visible, true)) {
+                $afterOffer = array_search('offer', $visible, true);
+                array_splice($visible, $afterOffer === false ? count($visible) : $afterOffer + 1, 0, ['referer']);
+                $_SESSION[self::SESSION_KEY] = $visible;
+            }
+            $_SESSION[self::SOURCE_PAGE_ADDED_KEY] = true;
+        }
+        return $visible;
     }
 
     /** @return list<string> */
@@ -75,7 +88,7 @@ final class ColumnPreferences
 
     /**
      * Save the user's chosen visible columns in the order they were given.
-     * @param list<string> $orderedVisible
+     * @param array<mixed> $orderedVisible
      */
     public function setVisible(array $orderedVisible): void
     {
@@ -84,6 +97,7 @@ final class ColumnPreferences
             static fn ($k) => is_string($k) && isset(self::COLUMNS[$k]),
         ));
         $_SESSION[self::SESSION_KEY] = $clean;
+        $_SESSION[self::SOURCE_PAGE_ADDED_KEY] = true;
     }
 
     /** @return array{field:string,dir:string} */
@@ -120,6 +134,6 @@ final class ColumnPreferences
 
     public function reset(): void
     {
-        unset($_SESSION[self::SESSION_KEY], $_SESSION[self::SORT_KEY]);
+        unset($_SESSION[self::SESSION_KEY], $_SESSION[self::SORT_KEY], $_SESSION[self::SOURCE_PAGE_ADDED_KEY]);
     }
 }

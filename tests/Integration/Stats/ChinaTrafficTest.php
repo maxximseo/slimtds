@@ -77,7 +77,8 @@ test('click lists deep links and mixed-country visitor journeys hide only China 
     expect($repo->count($filters))->toBe(2)->and($repo->page(1, 50, $filters))->toHaveCount(2);
     expect($repo->count($filters + ['country' => 'cn']))->toBe(0);
     expect($repo->page(1, 50, ['click_id' => '00000000-0000-7000-8000-000000000021']))->toBe([]);
-    expect(array_sum(array_column($repo->hourlyTimeline($filters), 'clicks')))->toBe(2);
+    $window = \App\Shared\Time\TimelineWindow::fromFilters($filters, 7);
+    expect(array_sum(array_column($repo->timeline($filters, $window), 'clicks')))->toBe(2);
     expect($repo->visitorTotals($this->visitorId)['clicks'])->toBe(1)
         ->and($repo->visitorTotals($this->visitorId)['pageviews'])->toBe(1)
         ->and($repo->visitorTotalsByFp('mixed')['clicks'])->toBe(1)
@@ -95,7 +96,8 @@ test('pixel lists campaign counters and independent timelines exclude China', fu
         ->and($repo->summary()['events'])->toBe(2)
         ->and($repo->countsForCampaign($this->campaignId))->toBe(['day' => 2, 'week' => 2, 'month' => 2])
         ->and($repo->recentForCampaign($this->campaignId))->toHaveCount(2);
-    expect(array_sum(array_column($repo->hourlyTimeline([]), 'events')))->toBe(2);
+    $window = \App\Shared\Time\TimelineWindow::fromFilters([], 7);
+    expect(array_sum(array_column($repo->timeline([], $window), 'events')))->toBe(2);
     expect(array_column($repo->topDomains(), 'host'))->not->toContain('cn.test', 'cn-ai.test');
     expect(array_sum(array_column($repo->topEventNames(), 'events')))->toBe(2);
 });

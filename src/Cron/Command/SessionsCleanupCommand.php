@@ -21,11 +21,6 @@ final class SessionsCleanupCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $deleted = $this->sessions->gc(0);
-        if ($deleted === false) {
-            $output->writeln('<error>session cleanup failed</error>');
-            return self::FAILURE;
-        }
-
         $output->writeln('<info>deleted:</info> ' . $deleted);
         return self::SUCCESS;
     }

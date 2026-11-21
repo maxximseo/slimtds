@@ -6,17 +6,76 @@ namespace App\Admin\Repository;
 
 use App\Shared\Db\Connection;
 use App\Shared\Referer\SearchEngine;
+use App\Shared\Time\DateRange;
+use App\Shared\Time\TimelineWindow;
 
 final class ClickRepository
 {
+
+    /**
+     * The pixel event whose entry source belongs to THIS click: same campaign,
+     * same visitor, newest one inside the window — NULL rows included.
+     *
+     * Newest, not earliest, and NULLs kept on purpose. entry_referer repeats
+     * unchanged across every page of one visit, while visitor_uuid outlives the
+     * tab that holds it: a visitor who arrived from Google in the morning and
+     * came back directly in the evening has both an old Google row and a fresh
+     * NULL one. Taking the earliest non-NULL would hand the evening's direct
+     * visit the morning's Google source. Taking the newest row as it stands
+     * lets the direct visit read as direct.
+     *
+     * Same campaign matters for the same reason: one visitor cookie can appear
+     * in several campaigns, and a source belongs to the campaign it arrived in.
+     *
+     * The window is a heuristic, not a visit boundary — without a session id
+     * shared by clicks and pixel events there is no exact link, so an unrelated
+     * event landing inside the +5 minutes can still win. Treat this as the best
+     * available guess, not a guarantee about which visit a click came from.
+     *
+     * Ties on created_at are broken by id so the same row is chosen every time;
+     * the column and the filter both read this query, and disagreeing on a tie
+     * would show one source while matching another.
+     *
+     * `none` therefore means "the chosen row carries a non-search source": a
+     * click whose visitor has no event in the window, or whose chosen row has
+     * no source at all, is in neither `any` nor `none`.
+     */
+    private const ENTRY_SOURCE_SQL = <<<'SQL'
+        SELECT pe.entry_referer
+        FROM stats.pixel_events pe
+        WHERE pe.campaign_id = c.campaign_id
+          AND pe.visitor_uuid = c.visitor_uuid
+          AND pe.created_at >= c.created_at - interval '24 hours'
+          AND pe.created_at <= c.created_at + interval '5 minutes'
+        ORDER BY pe.created_at DESC, pe.id DESC
+        LIMIT 1
+        SQL;
+
+    /**
+     * Dimension => SQL expression, for breakdown(). The key is the only thing a
+     * caller supplies; the expression never comes from outside this file.
+     */
+    public const BREAKDOWN_DIMENSIONS = [
+        'country'        => 'c.country',
+        'city'           => 'c.city',
+        'device'         => 'c.device',
+        'os'             => 'c.os',
+        'browser'        => 'c.browser',
+        'referer_domain' => "substring(c.referer from '^https?://([^/:?#]+)')",
+        'utm_source'     => 'c.utm_source',
+        'lander'         => 'c.lander_host',
+        'offer'          => 'o.name',
+        'flow'           => 'fl.name',
+        'campaign'       => 'cmp.slug::text',
+        'asn'            => "c.asn::text || ' ' || COALESCE(c.isp, '')",
+        'bot_name'       => 'c.bot_name',
+        'hour_of_day'    => "to_char(c.created_at, 'HH24')",
+    ];
+
     public function __construct(private readonly Connection $db) {}
 
     /**
-     * @param array{campaign_id?:?string, country?:?string, device?:?string, is_bot?:?bool, is_uniq?:?bool, since?:?string, is_trash?:?string, search?:?string, ip?:?string, click_id?:?string, visitor?:?string, fp_js?:?string} $filters
-     * @return list<array<string,mixed>>
-     */
-    /**
-     * @param array{campaign_id?:?string, country?:?string, device?:?string, is_bot?:?bool, is_uniq?:?bool, since?:?string, is_trash?:?string, search?:?string, ip?:?string, click_id?:?string, visitor?:?string, fp_js?:?string} $filters
+     * @param array{campaign_id?:?string, country?:?string, device?:?string, is_bot?:?bool, is_uniq?:?bool, since?:?string, is_trash?:?string, from?:?string, to?:?string, search?:?string, entry_ref?:?string, ip?:?string, click_id?:?string, visitor?:?string, fp_js?:?string} $filters
      * @param string $orderBy SQL fragment, must come from a whitelist (e.g. "c.created_at DESC")
      * @return list<array<string,mixed>>
      */
@@ -24,22 +83,22 @@ final class ClickRepository
     {
         $offset = max(0, ($page - 1) * $perPage);
         [$where, $params] = $this->buildWhere($filters);
-        $entryReferer = SearchEngine::clickEntryRefererSql('c');
         $params['limit'] = $perPage;
         $params['offset'] = $offset;
 
+        $entrySource = self::ENTRY_SOURCE_SQL;
         return $this->db->fetchAll(
             "SELECT c.id, c.campaign_id, c.flow_id, c.offer_id, c.visitor_uuid,
                     host(c.ip) AS ip, c.country, c.region, c.city, c.asn, c.isp,
                     c.device, c.os, c.browser, c.lang,
                     c.is_bot, c.bot_name, c.is_uniq, c.user_agent, c.referer,
-                    {$entryReferer} AS entry_referer,
                     c.utm_source, c.utm_medium, c.utm_campaign,
                     c.schema_id, c.out_url, c.http_status, c.created_at,
                     c.lander_host, c.lander_button, c.fp_js,
                     cmp.slug AS campaign_slug, cmp.name AS campaign_name,
                     o.name AS offer_name,
                     fl.name AS flow_name,
+                    ({$entrySource}) AS entry_referer,
                     (EXISTS (SELECT 1 FROM core.conversions cv WHERE cv.click_id = c.id))::int AS has_conversion
              FROM stats.clicks c
              LEFT JOIN core.campaigns cmp ON cmp.id = c.campaign_id
@@ -62,37 +121,200 @@ final class ClickRepository
         );
     }
 
+    /** Day (APP_TZ) of the oldest click on record — the lower bound of the "all time" preset. */
+    public function earliestDay(): ?string
+    {
+        // min() rides the (created_at, id) primary key of the oldest partition.
+        $day = $this->db->fetchScalar('SELECT min(created_at)::date::text FROM stats.clicks');
+        return is_string($day) && $day !== '' ? $day : null;
+    }
+
     /**
-     * Hourly buckets for the 48-hour window ending at the current hour.
-     * Re-applies the user's current filters (campaign/country/device/bot/uniq/routing)
-     * but ignores any 'since' override — the window is always [now()−47h, now()].
-     * Empty hours are filled with zeros via generate_series + LEFT JOIN.
+     * KPI row for the filtered list. Conversions are the ones attributed to the
+     * clicks that matched — so the numbers move with every filter, period included.
+     *
+     * @param array<string,mixed> $filters
+     * @return array{clicks:int, uniq_visitors:int, uniq_fp:int, conversions:int, approved:int, payout:string}
+     */
+    public function summary(array $filters = []): array
+    {
+        [$where, $params] = $this->buildWhere($filters);
+        $row = $this->db->fetchOne(
+            "SELECT count(*)                                                    AS clicks,
+                    count(DISTINCT c.visitor_uuid)                              AS uniq_visitors,
+                    count(DISTINCT c.fp_js) FILTER (WHERE c.fp_js IS NOT NULL)  AS uniq_fp,
+                    count(cv.id)                                                AS conversions,
+                    count(cv.id) FILTER (WHERE cv.status = 'approved')          AS approved,
+                    COALESCE(sum(cv.payout) FILTER (WHERE cv.status = 'approved'), 0)::text AS payout
+             FROM stats.clicks c
+             LEFT JOIN core.conversions cv ON cv.click_id = c.id
+             {$where}",
+            $params,
+        ) ?? [];
+        return [
+            'clicks'        => (int)($row['clicks']        ?? 0),
+            'uniq_visitors' => (int)($row['uniq_visitors'] ?? 0),
+            'uniq_fp'       => (int)($row['uniq_fp']       ?? 0),
+            'conversions'   => (int)($row['conversions']   ?? 0),
+            'approved'      => (int)($row['approved']      ?? 0),
+            'payout'        => (string)($row['payout']     ?? '0'),
+        ];
+    }
+
+    /**
+     * Per-status split of summary()['conversions'] for the same filtered
+     * clicks — the four statuses allowed by the CHECK on
+     * core.conversions.status, always present and zero-filled.
+     *
+     * @param array<string,mixed> $filters
+     * @return array{approved:int, pending:int, hold:int, rejected:int}
+     */
+    public function conversionStatuses(array $filters = []): array
+    {
+        [$where, $params] = $this->buildWhere($filters);
+        $rows = $this->db->fetchAll(
+            "SELECT cv.status, count(*) AS n
+             FROM stats.clicks c
+             JOIN core.conversions cv ON cv.click_id = c.id
+             {$where}
+             GROUP BY cv.status",
+            $params,
+        );
+        $counts = ['approved' => 0, 'pending' => 0, 'hold' => 0, 'rejected' => 0];
+        foreach ($rows as $row) {
+            $status = (string)$row['status'];
+            if (array_key_exists($status, $counts)) {
+                $counts[$status] = (int)$row['n'];
+            }
+        }
+        return $counts;
+    }
+
+    /**
+     * Top N landers (the SEO site whose /play/ button produced the click).
+     * Direct hits carry no lander and are left out rather than shown as a row.
+     *
+     * @param array<string,mixed> $filters
+     * @return list<array{label:string, clicks:int}>
+     */
+    public function topLanders(array $filters = [], int $limit = 10): array
+    {
+        [$where, $params] = $this->buildWhere($filters);
+        $params['limit'] = $limit;
+        $where .= ($where === '' ? 'WHERE ' : ' AND ') . "c.lander_host IS NOT NULL AND c.lander_host <> ''";
+
+        return array_map(static fn (array $r): array => ['label' => (string)$r['label'], 'clicks' => (int)$r['clicks']], $this->db->fetchAll(
+            "SELECT c.lander_host AS label, count(*) AS clicks
+             FROM stats.clicks c
+             {$where}
+             GROUP BY c.lander_host
+             ORDER BY clicks DESC, label
+             LIMIT :limit",
+            $params,
+        ));
+    }
+
+    /**
+     * Top N offers the matched clicks were routed to. Trash/no-offer clicks are
+     * left out; an offer deleted since keeps its clicks under its id.
+     *
+     * @param array<string,mixed> $filters
+     * @return list<array{label:string, clicks:int}>
+     */
+    public function topOffers(array $filters = [], int $limit = 10): array
+    {
+        [$where, $params] = $this->buildWhere($filters);
+        $params['limit'] = $limit;
+        $where .= ($where === '' ? 'WHERE ' : ' AND ') . 'c.offer_id IS NOT NULL';
+
+        return array_map(static fn (array $r): array => ['label' => (string)$r['label'], 'clicks' => (int)$r['clicks']], $this->db->fetchAll(
+            "SELECT COALESCE(o.name, c.offer_id::text) AS label, count(*) AS clicks
+             FROM stats.clicks c
+             LEFT JOIN core.offers o ON o.id = c.offer_id
+             {$where}
+             GROUP BY 1
+             ORDER BY clicks DESC, label
+             LIMIT :limit",
+            $params,
+        ));
+    }
+
+    /**
+     * Clicks grouped by one dimension, with the conversions of those clicks.
+     * Shares buildWhere() with the list, so a row here is the same set of
+     * clicks the admin UI would show under the same filters.
+     *
+     * @param array<string,mixed> $filters
+     * @return list<array{label:string, clicks:int, uniq:int, conversions:int, approved:int, payout:string}>
+     */
+    public function breakdown(string $dimension, array $filters = [], int $limit = 50): array
+    {
+        $expr = self::BREAKDOWN_DIMENSIONS[$dimension]
+            ?? throw new \InvalidArgumentException("unknown dimension: {$dimension}");
+        [$where, $params] = $this->buildWhere($filters);
+        $params['lim'] = $limit;
+        $rows = $this->db->fetchAll(
+            "SELECT COALESCE(NULLIF({$expr}, ''), '(none)')                     AS label,
+                    count(*)                                                     AS clicks,
+                    count(*) FILTER (WHERE c.is_uniq)                            AS uniq,
+                    count(cv.id)                                                 AS conversions,
+                    count(cv.id) FILTER (WHERE cv.status = 'approved')           AS approved,
+                    COALESCE(sum(cv.payout) FILTER (WHERE cv.status = 'approved'), 0)::text AS payout
+             FROM stats.clicks c
+             LEFT JOIN core.conversions cv ON cv.click_id = c.id
+             LEFT JOIN core.campaigns cmp  ON cmp.id = c.campaign_id
+             LEFT JOIN core.offers o       ON o.id   = c.offer_id
+             LEFT JOIN core.flows fl       ON fl.id  = c.flow_id
+             {$where}
+             GROUP BY 1
+             ORDER BY clicks DESC, label
+             LIMIT :lim",
+            $params,
+        );
+        return array_map(static fn (array $r): array => [
+            'label'       => (string)$r['label'],
+            'clicks'      => (int)$r['clicks'],
+            'uniq'        => (int)$r['uniq'],
+            'conversions' => (int)$r['conversions'],
+            'approved'    => (int)$r['approved'],
+            'payout'      => (string)$r['payout'],
+        ], $rows);
+    }
+
+    /**
+     * Chart buckets over the same period and filters as the list under it
+     * (campaign/country/device/bot/uniq/routing) — hourly, or daily once the
+     * period is wider than TimelineWindow::HOURLY_MAX_DAYS. Empty buckets are
+     * filled with zeros via generate_series + LEFT JOIN. The bucket start stays
+     * under the 'hour' key whatever the step, which is what the chart reads.
      *
      * @param array<string,mixed> $filters
      * @return list<array{hour:string, clicks:int, uniq:int, bot:int}>
      */
-    public function hourlyTimeline(array $filters): array
+    public function timeline(array $filters, TimelineWindow $window): array
     {
         [$extraConds, $params] = $this->filterConditionsNoTime($filters);
         $extra = $extraConds ? ' AND ' . implode(' AND ', $extraConds) : '';
+        $params += $window->params;
+        $step = $window->step;
 
         $rows = $this->db->fetchAll(
             <<<SQL
                 WITH hours AS (
                     SELECT generate_series(
-                        date_trunc('hour', now()) - interval '47 hours',
-                        date_trunc('hour', now()),
-                        interval '1 hour'
+                        {$window->startSql},
+                        {$window->endSql} - interval '1 {$step}',
+                        interval '1 {$step}'
                     ) AS hour
                 ),
                 agg AS (
-                    SELECT date_trunc('hour', c.created_at)    AS hour,
+                    SELECT date_trunc('{$step}', c.created_at) AS hour,
                            count(*)                            AS clicks,
                            count(*) FILTER (WHERE c.is_uniq)   AS uniq,
                            count(*) FILTER (WHERE c.is_bot)    AS bot
                     FROM stats.clicks c
-                    WHERE c.created_at >= date_trunc('hour', now()) - interval '47 hours'
-                      AND c.created_at <  date_trunc('hour', now()) + interval '1 hour'
+                    WHERE c.created_at >= {$window->startSql}
+                      AND c.created_at <  {$window->endSql}
                       {$extra}
                     GROUP BY 1
                 )
@@ -351,13 +573,23 @@ final class ClickRepository
             $where = $cond ? 'WHERE ' . implode(' AND ', $cond) : '';
             return [$where, $params];
         }
-        // Time-window optimization for partition pruning — caller can pass 'since' as ISO string
-        if (!empty($filters['since'])) {
+        // Time window, also what prunes partitions. The filter bar's day range
+        // (from/to, inclusive) wins over the legacy ISO 'since' of old deep links.
+        $from = DateRange::day($filters['from'] ?? null);
+        $to   = DateRange::day($filters['to'] ?? null);
+        if ($from !== null) {
+            $cond[] = 'c.created_at >= :from::timestamptz';
+            $params['from'] = $from;
+        } elseif (!empty($filters['since'])) {
             $cond[] = 'c.created_at >= :since';
             $params['since'] = (string)$filters['since'];
         } else {
             // Default 7-day window — uses BRIN index efficiently
             $cond[] = "c.created_at >= now() - interval '7 days'";
+        }
+        if ($to !== null) {
+            $cond[] = 'c.created_at < :to_excl::timestamptz';
+            $params['to_excl'] = DateRange::exclusiveEnd($to);
         }
         $where = $cond ? 'WHERE ' . implode(' AND ', $cond) : '';
         return [$where, $params];
@@ -394,11 +626,11 @@ final class ClickRepository
             $cond[] = 'c.is_bot = false';
         } elseif ($botView === 'only') {
             $cond[] = 'c.is_bot = true';
-        } elseif (isset($filters['is_bot']) && $filters['is_bot'] !== null) {
+        } elseif (isset($filters['is_bot'])) {
             $cond[] = 'c.is_bot = :is_bot';
             $params['is_bot'] = $filters['is_bot'] ? 'true' : 'false';
         }
-        if (isset($filters['is_uniq']) && $filters['is_uniq'] !== null) {
+        if (isset($filters['is_uniq'])) {
             $cond[] = 'c.is_uniq = :is_uniq';
             $params['is_uniq'] = $filters['is_uniq'] ? 'true' : 'false';
         }
@@ -413,13 +645,31 @@ final class ClickRepository
         }
         // Search-engine referer filter (any | <engine> | none)
         if (!empty($filters['search'])) {
+            $entrySource = self::ENTRY_SOURCE_SQL;
             [$frag, $bind] = SearchEngine::sqlFilterCompact(
                 (string)$filters['search'],
-                SearchEngine::clickEntryRefererSql('c'),
+                "({$entrySource})",
                 'se',
             );
             if ($frag !== '') {
                 $cond[] = $frag;
+                $params = array_merge($params, $bind);
+            }
+        }
+        // Entry-source filter (any | <engine> | none) — OPT-IN, never a default.
+        // Matches the entry referer the pixel recorded for the same visitor
+        // instead of the click's own Referer header, which behind a server-side
+        // go.php redirect is the lander itself. Written as EXISTS so it works
+        // identically in page() and count(), and costs nothing when unset.
+        if (!empty($filters['entry_ref'])) {
+            [$frag, $bind] = SearchEngine::sqlFilter((string)$filters['entry_ref'], 'sel.entry_referer', 'eref');
+            if ($frag !== '') {
+                // Filters the ONE row the column shows, not "any event in the
+                // window": otherwise a click could display one source and match
+                // a filter for another. The row is picked once in the derived
+                // table, so the engine patterns test a single value.
+                $sel = self::ENTRY_SOURCE_SQL;
+                $cond[] = "EXISTS (SELECT 1 FROM ({$sel}) sel WHERE {$frag})";
                 $params = array_merge($params, $bind);
             }
         }
@@ -436,7 +686,7 @@ final class ClickRepository
             $params['fp_js'] = (string)$filters['fp_js'];
         }
         // fp_js presence filter — '1' = with fp, '0' = no fp.
-        if (isset($filters['fp_js_has']) && $filters['fp_js_has'] !== null) {
+        if (isset($filters['fp_js_has'])) {
             $cond[] = $filters['fp_js_has'] === '1' ? 'c.fp_js IS NOT NULL' : 'c.fp_js IS NULL';
         }
         return [$cond, $params];

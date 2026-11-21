@@ -6,20 +6,32 @@ namespace App\Engine;
 
 use App\Admin\Repository\Campaign;
 use App\Admin\Repository\CampaignRepository;
+use App\Admin\Repository\Flow;
 use App\Admin\Repository\Offer;
 use App\Admin\Repository\OfferRepository;
 use App\Engine\Schema\SchemaRegistry;
 use App\Shared\Db\Connection;
 use App\Shared\Referer\SearchEngine;
+use App\Shared\TestLink;
 use App\Admin\Repository\SettingsRepository;
 use App\Shared\Notification\NotificationRegistry;
 use App\Shared\Telegram\TelegramNotifier;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Ramsey\Uuid\Uuid;
+use Slim\Psr7\Factory\StreamFactory;
 
 final class ClickHandler
 {
+    /**
+     * Candidate ids end up in `core.offers.id`, a `uuid` column, where a
+     * malformed value is not a miss but a 22P02 that aborts the whole lookup.
+     * PostgreSQL also accepts a uuid in any case and hands it back canonically
+     * lowercased, so an id is normalised the moment it is accepted — otherwise
+     * a mixed-case reference never matches the row it just loaded.
+     */
+    private const OFFER_ID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
     public function __construct(
         private readonly CampaignRepository $campaigns,
         private readonly OfferRepository $offers,
@@ -64,8 +76,73 @@ final class ClickHandler
         $this->device->detect($ctx, $request->getHeaderLine('Accept-Language'));
         $this->bot->detect($ctx);
 
-        $flow = $this->matcher->match($campaign->id, $ctx);
+        // Test link. A campaign key routes like real traffic (filters, bot
+        // detection) with only the country swappable; a flow key pins that
+        // flow and skips its filters. A wrong key is ordinary traffic.
+        $test = TestLink::fromRequest($request);
+        $testMode = null;
+        $flow = null;
+        if ($test !== null) {
+            if ($test->isCampaign($campaign->id)) {
+                $testMode = 'campaign';
+            } elseif (($flow = $this->matcher->forTestLink($campaign->id, $test)) !== null) {
+                $testMode = 'flow';
+                $ctx->matchedFlowId = $flow->id;
+            }
+            if ($testMode !== null && $test->geo !== null) {
+                $ctx->country = $test->geo;
+                $ctx->region = null;
+                $ctx->city = null;
+            }
+        }
 
+        $flow ??= $this->matcher->match($campaign->id, $ctx);
+        $resp = $this->route($campaign, $ctx, $flow, $request, $response, $needCookie);
+        if ($testMode === null) {
+            return $resp;
+        }
+
+        $trace = [
+            'mode'     => $testMode,
+            'ip'       => $ctx->ip,
+            'asn'      => $ctx->asn === null ? '-' : $ctx->asn . ($ctx->isp !== null ? ' ' . $ctx->isp : ''),
+            'country'  => $ctx->country ?? '-',
+            'device'   => $ctx->device ?? '-',
+            'bot'      => $ctx->isBot ? ($ctx->botName ?? 'yes') : 'no',
+            'flow'     => $flow === null ? '- (no flow matched: campaign fallback)' : $flow->name . ' [' . $flow->id . ']',
+            'offer'    => $ctx->matchedOfferId ?? '-',
+            'status'   => (string)$resp->getStatusCode(),
+            'location' => $resp->getHeaderLine('Location') ?: '-',
+        ];
+
+        if ($test?->dry === true) {
+            $text = '';
+            foreach ($trace as $k => $v) {
+                $text .= str_pad($k, 10) . (string)$v . "\n";
+            }
+            return $response
+                ->withStatus(200)
+                ->withoutHeader('Location')
+                ->withHeader('Content-Type', 'text/plain; charset=utf-8')
+                ->withHeader('Cache-Control', 'no-store')
+                ->withBody((new StreamFactory())->createStream($text));
+        }
+
+        $header = [];
+        foreach ($trace as $k => $v) {
+            $header[] = $k . '=' . rawurlencode((string)$v);
+        }
+        return $resp->withHeader('X-TDS-Debug', implode('; ', $header));
+    }
+
+    private function route(
+        Campaign $campaign,
+        Context $ctx,
+        ?Flow $flow,
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        bool $needCookie,
+    ): ResponseInterface {
         // Mint clickId early so macros like {click_id} resolve during URL expansion
         $ctx->clickId = Uuid::uuid7()->toString();
 
@@ -74,34 +151,26 @@ final class ClickHandler
         // Without this we'd silently use schema 13 (NoAction → 200), which
         // both leaks "campaign exists" and ignores trash_url.
         if ($flow === null) {
-            $trashUrl = $this->resolveTrashUrl($campaign, $ctx);
-            $resp = $this->trash($campaign, $trashUrl, $response);
-            $schemaId = (int)($campaign->defaultSchema ?? 13);
-            // For redirect-style trash modes pass the resolved trash URL as out_url
-            // so /admin/clicks shows where the visitor was actually sent.
-            $trashOut = in_array($campaign->trashMode, [1, 4, 5, 6, 7], true)
-                ? ($trashUrl ?: null)
-                : null;
-            $this->logClick($ctx, $campaign, $trashOut, $resp->getStatusCode(), $schemaId);
-            if ($needCookie && $ctx->visitorUuid !== null) {
-                $resp = $this->visitor->attachCookie($resp, $ctx->visitorUuid, $request->getUri()->getScheme() === 'https');
-            }
-            return $resp;
+            return $this->fallBackToTrash($campaign, $ctx, $request, $response, $needCookie);
         }
 
         $outUrl = null;
         $schemaId = $flow->schemaId;
-        $schemaConfig = $flow->schemaConfig ?? [];
+        $schemaConfig = $flow->schemaConfig;
 
-        if ($flow !== null && $flow->targetType === 'offers' && $flow->targetOffers !== []) {
+        if ($flow->targetType === 'offers' && $flow->targetOffers !== []) {
             // Flow override wins; null = inherit the campaign default.
             $sticky = $flow->stickyOffer ?? $campaign->stickyOffer;
-            $offerId = $this->picker->pick($flow->targetOffers, $ctx, $sticky);
-            if ($offerId !== null) {
-                $offer = $this->offers->findById($offerId);
-                if ($offer !== null) {
-                    $outUrl = $this->macros->expand($offer->url, $ctx);
-                }
+            $offer = $this->pickActiveOffer($flow->targetOffers, $ctx, $sticky);
+            if ($offer !== null) {
+                $outUrl = $this->macros->expand($offer->url, $ctx);
+            } elseif (trim((string)($schemaConfig['url'] ?? '')) === '') {
+                // The flow targets offers but none of them can be served, and
+                // there is no static target to fall back on. That is the same
+                // situation as "no flow matched" from the operator's side, so
+                // take the same exit: their campaign fallback fires instead of
+                // the schema answering 204 into the void.
+                return $this->fallBackToTrash($campaign, $ctx, $request, $response, $needCookie);
             }
         }
 
@@ -153,32 +222,7 @@ final class ClickHandler
         $ua = $request->getHeaderLine('User-Agent') ?: '-';
         $ctx = new Context($ip, $ua, $slug, time());
 
-        $referer = $request->getHeaderLine('Referer');
-        if ($referer !== '') {
-            $ctx->referer = $referer;
-            $host = parse_url($referer, PHP_URL_HOST);
-            $ctx->refererDomain = is_string($host) ? strtolower($host) : null;
-        }
-
-        // Lander attribution: SEO-sites' nginx proxies /play/<button>/ → here and
-        // forwards the original Host as X-Lander-Host and original path+query as
-        // X-Lander-Path. Direct hits (without the proxy) leave both null.
-        $landerHost = strtolower(trim($request->getHeaderLine('X-Lander-Host')));
-        if ($landerHost !== '') {
-            $ctx->landerHost = $landerHost;
-            $h = preg_replace('/^www\./', '', $landerHost) ?? $landerHost;
-            // Strip the rightmost label as the TLD ("casinoroyalatino.com" → "casinoroyalatino").
-            // Compound TLDs (.co.uk, etc.) aren't currently in use across our SEO sites.
-            $ctx->landerDomain = preg_match('/^(.+)\.[^.]+$/', $h, $m) ? $m[1] : $h;
-        }
-        $landerPath = $request->getHeaderLine('X-Lander-Path');
-        if ($landerPath !== '') {
-            $pathOnly = strstr($landerPath, '?', true);
-            if ($pathOnly === false) $pathOnly = $landerPath;
-            if (preg_match('#^/play/([^/?]+)/?#', $pathOnly, $m)) {
-                $ctx->landerButton = strtolower($m[1]);
-            }
-        }
+        LanderContext::apply($ctx, $request);
 
         $query = $request->getQueryParams();
         foreach (['source', 'medium', 'campaign', 'term', 'content'] as $name) {
@@ -197,6 +241,83 @@ final class ClickHandler
      * (so the offer's own {spin}/{click_id} fire); anything else is
      * macro-expanded as-is. Empty or unresolvable → '' (→ trash 204).
      */
+    /**
+     * Weighted pick that never routes to a switched-off offer.
+     *
+     * The pick runs against the unfiltered candidate list first, and only the
+     * winner is checked. Narrowing the list up front looks tidier but is not
+     * free: OfferPicker's sticky mode is hash(visitor) % sum(weights), so
+     * dropping a candidate changes the modulus and moves every visitor, not
+     * just the ones sitting on the offer that was switched off — measured at
+     * ~50% churn for three candidates of equal weight. Verifying the winner
+     * keeps the normal path at a single primary-key read and re-picks only for
+     * the visitors who actually lost their offer.
+     *
+     * @param list<array<string,mixed>> $targets
+     */
+    private function pickActiveOffer(array $targets, Context $ctx, bool $sticky): ?Offer
+    {
+        $picked = $this->picker->pick($targets, $ctx, $sticky);
+        if ($picked !== null && preg_match(self::OFFER_ID, $picked) === 1) {
+            $offer = $this->offers->findById(strtolower($picked));
+            if ($offer !== null && $offer->isActive) {
+                $ctx->matchedOfferId = $offer->id;
+                return $offer;
+            }
+        }
+
+        // Winner is inactive, gone, or was never a uuid at all. Re-pick among
+        // the candidates that can actually be served — one damaged entry must
+        // not take its healthy neighbours down with it.
+        $active = $this->offers->findActiveByIds(array_map(self::candidateOfferId(...), $targets));
+        $servable = array_values(array_filter(
+            $targets,
+            static fn (array $target): bool => isset($active[self::candidateOfferId($target)]),
+        ));
+        $fallback = $servable === [] ? null : $this->picker->pick($servable, $ctx, $sticky);
+        $offer = $fallback === null ? null : ($active[strtolower($fallback)] ?? null);
+        $ctx->matchedOfferId = $offer?->id;
+
+        return $offer;
+    }
+
+    /** @param array<string,mixed> $target */
+    private static function candidateOfferId(array $target): string
+    {
+        $offerId = $target['offer_id'] ?? null;
+
+        return is_string($offerId) && preg_match(self::OFFER_ID, $offerId) === 1
+            ? strtolower($offerId)
+            : '';
+    }
+
+    /**
+     * The operator-configured campaign fallback: reached both when no flow
+     * matched and when the matched flow has nothing left to route to.
+     */
+    private function fallBackToTrash(
+        Campaign $campaign,
+        Context $ctx,
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        bool $needCookie,
+    ): ResponseInterface {
+        $trashUrl = $this->resolveTrashUrl($campaign, $ctx);
+        $resp = $this->trash($campaign, $trashUrl, $response);
+        $schemaId = (int)($campaign->defaultSchema ?? 13);
+        // For redirect-style trash modes pass the resolved trash URL as out_url
+        // so /admin/clicks shows where the visitor was actually sent.
+        $trashOut = in_array($campaign->trashMode, [1, 4, 5, 6, 7], true)
+            ? ($trashUrl ?: null)
+            : null;
+        $this->logClick($ctx, $campaign, $trashOut, $resp->getStatusCode(), $schemaId);
+        if ($needCookie && $ctx->visitorUuid !== null) {
+            $resp = $this->visitor->attachCookie($resp, $ctx->visitorUuid, $request->getUri()->getScheme() === 'https');
+        }
+
+        return $resp;
+    }
+
     private function resolveTrashUrl(Campaign $c, Context $ctx): string
     {
         $raw = trim((string)($c->trashUrl ?? ''));
@@ -208,14 +329,20 @@ final class ClickHandler
         return $this->macros->expand($raw, $ctx);
     }
 
-    /** Resolve an {offer:X} reference by UUID id, falling back to exact name. */
+    /**
+     * Resolve an {offer:X} reference by UUID id, falling back to exact name.
+     * A switched-off offer resolves to null on both branches: an operator who
+     * turns an offer off means it stops receiving traffic, trash_url included.
+     */
     private function resolveOffer(string $ref): ?Offer
     {
-        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $ref)) {
-            $byId = $this->offers->findById($ref);
-            if ($byId !== null) return $byId;
+        if (preg_match(self::OFFER_ID, $ref) === 1) {
+            $byId = $this->offers->findById(strtolower($ref));
+            if ($byId !== null) return $byId->isActive ? $byId : null;
         }
-        return $this->offers->findByName($ref);
+        $byName = $this->offers->findByName($ref);
+
+        return $byName !== null && $byName->isActive ? $byName : null;
     }
 
     private function trash(?Campaign $c, string $url, ResponseInterface $response): ResponseInterface
@@ -253,7 +380,7 @@ final class ClickHandler
                 return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
             case 7: // JS Redirect
                 if (!$hasUrl) return $response->withStatus(204);
-                $j = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $j = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
                 $h = htmlspecialchars($url, ENT_QUOTES);
                 $body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
                       . "<meta name=\"referrer\" content=\"no-referrer\">"

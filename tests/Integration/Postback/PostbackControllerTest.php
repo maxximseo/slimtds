@@ -46,11 +46,13 @@ beforeEach(function (): void {
         'is_active' => '1',
     ]);
 
-    // Insert a click row directly for the current month partition
-    // visitor_uuid and ip are NOT NULL
+    // Insert a click row directly for the current month partition.
+    // visitor_uuid and ip are NOT NULL. offer_id is set to the click's served
+    // offer (as the engine does on the redirect path) so offer-token postbacks
+    // are validated against the offer the click was actually routed to.
     $pdo->exec(
-        "INSERT INTO stats.clicks (id, campaign_id, visitor_uuid, ip)
-         VALUES (uuidv7(), '{$this->camp->id}', gen_random_uuid()::uuid, '1.1.1.1')",
+        "INSERT INTO stats.clicks (id, campaign_id, offer_id, visitor_uuid, ip)
+         VALUES (uuidv7(), '{$this->camp->id}', '{$this->offer->id}', gen_random_uuid()::uuid, '1.1.1.1')",
     );
 });
 
@@ -170,6 +172,30 @@ test('legacy Keitaro subid resolves to its deterministic imported click UUID', f
         ->and((float)$row['payout'])->toBe(15.0);
 });
 
+test('offer token rejects postback for a click routed to a different offer', function (): void {
+    $cid = clickId($this);
+
+    // A second global offer with its own token. The seeded click belongs to
+    // $this->offer, so claiming it with a different offer's token must fail.
+    $otherOffer = $this->oRepo->create([
+        'name'      => 'Other Offer',
+        'url'       => 'https://other.example/',
+        'is_active' => '1',
+    ]);
+
+    $req  = pbRequest(['subid' => $cid, 'token' => $otherOffer->postbackToken, 'payout' => '9.99', 'status' => 'approved']);
+    $resp = ($this->ctrl)($req, new Response());
+
+    expect($resp->getStatusCode())->toBe(409);
+
+    // The victim click's conversion must not have been created/overwritten.
+    $count = (int)$this->db->fetchScalar(
+        'SELECT count(*) FROM core.conversions WHERE click_id = :cid',
+        ['cid' => $cid],
+    );
+    expect($count)->toBe(0);
+});
+
 test('shared offer accepts postback for click from any campaign', function (): void {
     $cid = clickId($this);
 
@@ -243,6 +269,7 @@ test('network token rejects a click whose offer host belongs to another network'
 
 test('network token requires a bound offer on the click', function (): void {
     $cid = clickId($this);
+    $this->db->execute('UPDATE stats.clicks SET offer_id = NULL WHERE id = :id', ['id' => $cid]);
     $_ENV['NETWORK_POSTBACKS'] = json_encode([
         'example' => [
             'token' => str_repeat('c', 40),

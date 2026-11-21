@@ -7,21 +7,42 @@ namespace App\Admin\Controller;
 use App\Admin\Clicks\ColumnPreferences;
 use App\Admin\Repository\CampaignRepository;
 use App\Admin\Repository\ClickRepository;
+use App\Admin\Repository\ViewPreferenceRepository;
+use App\Shared\Time\DateRange;
+use App\Shared\Time\TimelineWindow;
 use App\Shared\View\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 final class ClickController
 {
+    /** Filter keys an operator may pin as their personal default for this list. */
+    /** Days in the default list window — mirrors ClickRepository's `interval '7 days'`. */
+    private const DEFAULT_DAYS = 7;
+
+    private const SAVEABLE = ['is_trash', 'bot_view', 'search', 'entry_ref', 'fp_js_has'];
+
+    private const VIEW_KEY = 'clicks';
+
     public function __construct(
         private readonly ClickRepository $repo,
         private readonly CampaignRepository $campaigns,
         private readonly ColumnPreferences $columns,
+        private readonly ViewPreferenceRepository $viewPrefs,
     ) {}
 
     public function index(ServerRequestInterface $request, ResponseInterface $response, View $view): ResponseInterface
     {
         $params = $request->getQueryParams();
+
+        // Saved default view — applied ONLY when the operator arrives with no
+        // filter of their own in the URL. Any explicit query wins outright, so a
+        // shared link always shows the same rows to whoever opens it.
+        $saved = [];
+        if (!$this->hasOwnFilters($params)) {
+            $saved = $this->viewPrefs->get($this->adminId(), self::VIEW_KEY, self::SAVEABLE);
+            $params += $saved;
+        }
 
         // Sort: ?sort=<col>&dir=asc|desc — clicking a column header toggles dir
         if (isset($params['sort']) && is_string($params['sort'])) {
@@ -47,14 +68,33 @@ final class ClickController
         $botView = $params['bot_view'] ?? ($hasExactLookup ? 'all' : 'hide');
         if (!in_array($botView, ['hide', 'all', 'only'], true)) $botView = 'all';
 
+        // Entry-source filter — OPT-IN only, so the default view is unchanged.
+        // Exact lookups bypass it: a postback audit must find its click_id row
+        // no matter how the list happens to be filtered.
+        $hasExactLookup = ($params['click_id'] ?? '') !== ''
+            || ($params['visitor'] ?? '') !== ''
+            || ($params['fp_js'] ?? '') !== '';
+        $entryRef = is_string($params['entry_ref'] ?? null) && $params['entry_ref'] !== ''
+            ? $params['entry_ref']
+            : null;
+        if ($hasExactLookup) $entryRef = null;
+
+        // Day range from the filter bar. Unset = the repository's rolling
+        // 7-day default; the inputs are prefilled with that same window.
+        $range = DateRange::fromQuery($params, self::DEFAULT_DAYS, fn (): ?string => $this->repo->earliestDay());
+
         $filters = [
             'campaign_id' => $params['campaign_id'] ?? null,
+            'entry_ref'   => $entryRef,
             'country'     => $params['country'] ?? null,
             'device'      => $params['device'] ?? null,
             'bot_view'    => $botView,
             'is_uniq'     => isset($params['is_uniq']) && $params['is_uniq'] !== '' ? ($params['is_uniq'] === '1') : null,
             'is_trash'    => $routing,
             'since'       => $params['since'] ?? null,
+            'from'        => $range->from,
+            'to'          => $range->to,
+            'range'       => $range->preset,
             'search'      => array_key_exists('search', $params)
                 ? (is_string($params['search']) && $params['search'] !== '' ? $params['search'] : null)
                 : ($hasExactLookup ? null : 'any'),
@@ -75,7 +115,11 @@ final class ClickController
         $items = $this->repo->page($page, $perPage, $filters, $orderBy);
         $total = $this->repo->count($filters);
         $pages = max(1, (int)ceil($total / $perPage));
-        $timeline = $this->repo->hourlyTimeline($filters);
+        $window = TimelineWindow::fromFilters($filters, self::DEFAULT_DAYS);
+        $timeline = $this->repo->timeline($filters, $window);
+        $summary = $this->repo->summary($filters);
+        $topLanders = $this->repo->topLanders($filters, 10);
+        $topOffers = $this->repo->topOffers($filters, 10);
 
         // When the user is drilling into a single click via ?click_id=, also
         // load the visitor card + journey so they can see the full pre/post
@@ -123,16 +167,75 @@ final class ClickController
                 'total' => $total,
                 'pages' => $pages,
                 'page' => $page,
-                'filters' => $filters,
+                'filters' => $range->forView($filters),
                 'timeline' => $timeline,
+                'timeline_step' => $window->step,
+                'summary' => $summary,
+                'topLanders' => $topLanders,
+                'topOffers' => $topOffers,
+                'range_from' => $range->from ?? DateRange::daysAgo(self::DEFAULT_DAYS),
+                'range_to' => $range->to ?? DateRange::today(),
                 'campaigns' => $this->campaigns->page(1, 100),
                 'columns_meta' => ColumnPreferences::COLUMNS,
                 'visible_columns' => $this->columns->visible(),
                 'sort' => $sort,
                 'visitor' => $visitor,
+                'saved_view' => $saved,
             ],
         );
         return $view->respond($response, 'admin/clicks/index', $data);
+    }
+
+    /**
+     * Pin the filters currently in the URL as this operator's default view.
+     * Saving with an empty query clears the preference, which is what the
+     * "reset" affordance sends.
+     */
+    public function saveView(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $body = $request->getParsedBody();
+        $prefs = [];
+        if (is_array($body)) {
+            foreach (self::SAVEABLE as $key) {
+                $val = $body[$key] ?? null;
+                if (is_string($val) && $val !== '') {
+                    $prefs[$key] = $val;
+                }
+            }
+        }
+
+        if ($prefs === []) {
+            $this->viewPrefs->clear($this->adminId(), self::VIEW_KEY);
+        } else {
+            $this->viewPrefs->save($this->adminId(), self::VIEW_KEY, $prefs, self::SAVEABLE);
+        }
+
+        return $response->withHeader('Location', '/admin/clicks')->withStatus(302);
+    }
+
+    /**
+     * True when the operator brought any filter of their own in the query
+     * string. Pagination and sorting are navigation, not filtering, so they do
+     * not count — page 2 of a saved view must stay inside that view.
+     * @param array<string,mixed> $params
+     */
+    private function hasOwnFilters(array $params): bool
+    {
+        foreach ($params as $key => $value) {
+            if (in_array($key, ['page', 'sort', 'dir'], true)) {
+                continue;
+            }
+            if ($value !== '' && $value !== null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function adminId(): int
+    {
+        $id = $_SESSION['admin_id'] ?? null;
+        return is_int($id) ? $id : 0;
     }
 
     public function saveColumns(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface

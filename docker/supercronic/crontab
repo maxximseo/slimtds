@@ -55,6 +55,10 @@
 # 55s inner-loop pattern as inbox:flush.
 * * * * * /usr/local/bin/php /app/bin/console rrweb:flush
 
+# Check upstream for a newer release, twice daily. Odd minute so it does not
+# pile onto the jobs scheduled on the hour and half-hour.
+17 4,16 * * * /usr/local/bin/php /app/bin/console version:check
+
 # Demo-only: full reset to baseline every 4 hours. The shell guard avoids
 # invoking/journaling the destructive command at all on production hosts.
 0 */4 * * * if [ "${DEMO_MODE:-0}" = "1" ]; then /usr/local/bin/php /app/bin/console demo:reset; fi

@@ -1,5 +1,20 @@
+# Build identity, computed on the host where git exists. Exported so both
+# `docker compose build` (build args) and the dev overlay (runtime env) see the
+# same values. A checkout with no tags yields a bare hash, which the app
+# reports as a source build — never as a version it does not have.
+# --match 'v*' on purpose: `git describe --tags` takes the nearest reachable
+# tag of ANY kind, so a `rollback/...` tag left on a production checkout
+# becomes the reported version. Only release tags may name a build.
+GIT_VERSION := $(shell git describe --tags --always --dirty --match 'v*' 2>/dev/null)
+GIT_COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null)
+GIT_DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+export APP_VERSION    := $(GIT_VERSION)
+export APP_COMMIT     := $(GIT_COMMIT)
+export APP_BUILD_DATE := $(GIT_DATE)
+export APP_BUILD_KIND := source
+
 .DEFAULT_GOAL := help
-.PHONY: help env up down restart logs shell psql migrate seed seed-fresh seed-stats test test-up test-down test-unit test-integration test-arch test-browser stan benchmark build build-assets clean pixel-test-up pixel-test-down prod-up-cf prod-up-direct prod-down deploy
+.PHONY: help env up down restart logs shell psql migrate seed seed-fresh test test-up test-down test-unit test-integration test-arch test-browser test-publish release-publish stan benchmark build build-assets clean pixel-test-up pixel-test-down prod-up-cf prod-up-direct prod-down deploy seed-stats demo-up demo-down
 
 ## help — Show this help
 help:
@@ -98,7 +113,16 @@ test-arch:
 
 ## test-browser — Run browser tests (requires BROWSER_TESTS=1 + Playwright)
 test-browser:
-	docker compose exec -e BROWSER_TESTS=1 app ./vendor/bin/pest --testsuite=Browser
+	docker compose exec -e BROWSER_TESTS=1 -e BROWSER_BASE_URL="$(BROWSER_BASE_URL)" -e TEST_PG_DSN="$(TEST_PG_DSN)" -e BROWSER_LANDER_URL_PATTERN="$(BROWSER_LANDER_URL_PATTERN)" app ./vendor/bin/pest --testsuite=Browser
+
+## release-publish — Publish to GitHub (usage: make release-publish VERSION=0.7.1 [DRY=1])
+release-publish:
+	@[ -n "$(VERSION)" ] || { echo "usage: make release-publish VERSION=x.y.z [DRY=1]"; exit 1; }
+	bash scripts/publish.sh $(if $(DRY),--dry-run,) $(VERSION)
+
+## test-publish — Run the scripts/publish.sh tests (on the host, not in Docker)
+test-publish:
+	bash tests/publish/run.sh
 
 ## stan — PHPStan level 6
 stan:
@@ -114,7 +138,7 @@ build:
 
 ## build-assets — Rebuild frontend assets (Bun + Tailwind)
 build-assets:
-	docker run --rm -v "$(shell pwd):/app" -w /app oven/bun:1-alpine sh -c "bun install && bun run build"
+	docker run --rm -v "$(shell pwd):/app" -w /app oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 sh -c "bun install && bun run build"
 
 ## pixel-test-up — Start the 4-domain pixel test stand (lander-{a,b,c,d}.local, 3 pages each)
 pixel-test-up:
@@ -127,9 +151,9 @@ pixel-test-up:
 pixel-test-down:
 	docker compose -f docker-compose.pixel-test.yml down
 
-## prod-up-cf — Start prod stack behind Cloudflare (set DEPLOY_MODE=cf_flex|cf_full + DOMAIN in .env)
+## prod-up-cf — Start prod stack behind Cloudflare (set DEPLOY_MODE=cf_flex + DOMAIN in .env)
 prod-up-cf:
-	@grep -qE '^DEPLOY_MODE=cf' .env 2>/dev/null || { echo "Set DEPLOY_MODE=cf_flex or cf_full in .env first"; exit 1; }
+	@grep -qE '^DEPLOY_MODE=cf_flex' .env 2>/dev/null || { echo "Set DEPLOY_MODE=cf_flex in .env first (cf_full is not implemented — see docs/DEPLOYMENT.md)"; exit 1; }
 	docker compose -f docker-compose.yml -f docker-compose.prod.cf.yml up -d
 	@echo ""
 	@echo "Prod stack (Cloudflare) up. See docs/DEPLOYMENT.md."
@@ -151,6 +175,18 @@ prod-down:
 	else \
 		echo "DEPLOY_MODE in .env is neither 'cf*' nor 'direct'; pick one and re-run."; exit 1; \
 	fi
+
+## demo-up — bring up the self-resetting demo stack (run on the demo VPS)
+demo-up:
+	@grep -qE '^DEMO_MODE=1' .env 2>/dev/null || { echo "Set DEMO_MODE=1 in .env first"; exit 1; }
+	@grep -qE '^DEMO_DOMAIN=.' .env 2>/dev/null || { echo "Set DEMO_DOMAIN=demo.your.tld in .env first"; exit 1; }
+	docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+	@echo ""
+	@echo "Demo stack up. Caddy will provision Let's Encrypt cert for $$(grep ^DEMO_DOMAIN= .env | cut -d= -f2). Resets every 4h."
+
+## demo-down — stop the demo stack
+demo-down:
+	docker compose -f docker-compose.yml -f docker-compose.demo.yml down
 
 ## deploy — Print deployment guide
 deploy:

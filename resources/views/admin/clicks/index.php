@@ -22,7 +22,7 @@ $flag = function (?string $cc): string {
 // Build a /admin/clicks URL that preserves currently active filters but
 // applies the given override(s). Used to make every cell value a one-click
 // shortcut to filter the list to that value.
-$filterFields = ['campaign_id', 'country', 'device', 'bot_view', 'is_uniq', 'is_trash', 'since', 'search', 'fp_js', 'fp_js_has'];
+$filterFields = ['campaign_id', 'country', 'device', 'bot_view', 'is_uniq', 'is_trash', 'since', 'from', 'to', 'range', 'search', 'entry_ref', 'fp_js', 'fp_js_has'];
 $filterUrl = function (array $overrides) use ($filters, $filterFields): string {
     $q = [];
     foreach ($filterFields as $k) {
@@ -128,7 +128,7 @@ $renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): s
             $ua = (string)($r['user_agent'] ?? '');
             return '<span class="meta-mono" title="' . e($ua) . '" style="display:inline-block;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($ua) . '</span>';
         case 'referer':
-            $ref = (string)($r['entry_referer'] ?? $r['referer'] ?? '');
+            $ref = (string)($r['referer'] ?? '');
             if ($ref === '') return '<span style="color:var(--color-faintest)">—</span>';
             $eng = \App\Shared\Referer\SearchEngine::classify($ref);
             $body = '<span class="meta-mono" title="' . e($ref) . '" style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($ref) . '</span>';
@@ -136,6 +136,21 @@ $renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): s
                 $body = $chip($filterUrl(['search' => $eng]),
                     '<span class="badge badge-info">' . e($eng) . '</span>',
                     'Filter to ' . $eng . ' referers')
+                    . ' ' . $body;
+            }
+            return $body;
+        case 'entry_referer':
+            // The visit's external entry source, as recorded by the pixel. Empty
+            // whenever no pixel event covers this visitor — the raw Referer
+            // column is deliberately left to speak for itself in that case.
+            $eref = (string)($r['entry_referer'] ?? '');
+            if ($eref === '') return '<span style="color:var(--color-faintest)">—</span>';
+            $eng = \App\Shared\Referer\SearchEngine::classify($eref);
+            $body = '<span class="meta-mono" title="' . e($eref) . '" style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($eref) . '</span>';
+            if ($eng !== null) {
+                $body = $chip($filterUrl(['entry_ref' => $eng]),
+                    '<span class="badge badge-info">' . e($eng) . '</span>',
+                    'Filter to ' . $eng . ' entry sources')
                     . ' ' . $body;
             }
             return $body;
@@ -183,11 +198,35 @@ require __DIR__ . '/../../_partials/page-header.php';
 <!-- 48h timeline — last 48 hours from current hour, reflects active filters -->
 <div style="margin-bottom:18px;padding:14px 16px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">
     <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
-        <span class="eyebrow"><?= e(t('clicks.chart.last_48h')) ?></span>
-        <span style="font-family:var(--font-mono);font-size:0.7rem;color:var(--color-faint)"><?= e(t('clicks.chart.hourly_filtered')) ?></span>
+        <span class="eyebrow" style="font-variant-numeric:tabular-nums"><?= e(date('d.m.Y', (int)strtotime((string)($range_from ?? 'today')))) ?> – <?= e(date('d.m.Y', (int)strtotime((string)($range_to ?? 'today')))) ?></span>
+        <span style="font-family:var(--font-mono);font-size:0.7rem;color:var(--color-faint)"><?= e(t(($timeline_step ?? 'hour') === 'day' ? 'clicks.chart.daily_filtered' : 'clicks.chart.hourly_filtered')) ?></span>
     </div>
     <div x-data="clicksTimeline({ points: <?= e(json_encode($timeline, JSON_UNESCAPED_SLASHES)) ?> })" style="width:100%;height:180px"></div>
 </div>
+
+<?php if (!empty($summary)): ?>
+<!-- KPI cards — same period and filters as the list -->
+<?php $cr = $summary['clicks'] > 0 ? round($summary['approved'] / $summary['clicks'] * 100, 2) : 0.0; ?>
+<div class="kpi-grid-4" style="margin-bottom:18px">
+    <div class="kpi-card">
+        <span class="kpi-eyebrow"><?= e(t('clicks.kpi.clicks')) ?></span>
+        <div class="kpi-value"><?= (int)$summary['clicks'] ?></div>
+    </div>
+    <div class="kpi-card">
+        <span class="kpi-eyebrow"><?= e(t('clicks.kpi.unique_visitors')) ?></span>
+        <div class="kpi-value"><?= (int)$summary['uniq_visitors'] ?></div>
+    </div>
+    <div class="kpi-card">
+        <span class="kpi-eyebrow"><?= e(t('clicks.kpi.unique_fp')) ?></span>
+        <div class="kpi-value"><?= (int)$summary['uniq_fp'] ?></div>
+    </div>
+    <div class="kpi-card">
+        <span class="kpi-eyebrow"><?= e(t('clicks.kpi.conversions')) ?></span>
+        <div class="kpi-value"><?= (int)$summary['conversions'] ?></div>
+        <div class="kpi-meta" style="font-family:var(--font-mono)"><?= e(t('clicks.kpi.approved')) ?> <?= (int)$summary['approved'] ?> · CR <?= e(number_format($cr, 2)) ?>% · $<?= e(number_format((float)$summary['payout'], 2)) ?></div>
+    </div>
+</div>
+<?php endif; ?>
 
 <form method="get" class="filter-bar">
     <div class="filter-field">
@@ -201,6 +240,11 @@ require __DIR__ . '/../../_partials/page-header.php';
             <?php endforeach; ?>
         </select>
     </div>
+    <?php
+    $rangeDefault = '7d';
+    $rangeUrl = static fn (string $preset): string => $filterUrl(['range' => $preset, 'from' => null, 'to' => null, 'since' => null]);
+    require __DIR__ . '/../../_partials/date-range.php';
+    ?>
     <div class="filter-field">
         <label class="filter-label"><?= e(t('clicks.filter.country')) ?></label>
         <input type="text" name="country" value="<?= e((string)($filters['country'] ?? '')) ?>" placeholder="<?= e(t('clicks.filter.country_ph')) ?>" class="input-sm input-mono" style="width:110px">
@@ -267,7 +311,30 @@ require __DIR__ . '/../../_partials/page-header.php';
             <?php endforeach; ?>
         </select>
     </div>
+    <!-- Entry source — matches what the pixel saw when the visit started, not
+         the click's own Referer. Left unset by default: it only narrows the
+         list when the operator deliberately picks a value. -->
+    <div class="filter-field">
+        <label class="filter-label"><?= e(t('clicks.filter.entry_ref')) ?></label>
+        <select name="entry_ref" class="input-sm" style="width:170px">
+            <?php $curEr = (string)($filters['entry_ref'] ?? ''); ?>
+            <option value=""    <?= $curEr === ''     ? 'selected' : '' ?>><?= e(t('filter_opt.any')) ?></option>
+            <option value="any" <?= $curEr === 'any'  ? 'selected' : '' ?>><?= e(t('filter_opt.any_search')) ?></option>
+            <option value="none"<?= $curEr === 'none' ? 'selected' : '' ?>><?= e(t('filter_opt.non_search')) ?></option>
+            <?php foreach (\App\Shared\Referer\SearchEngine::keys() as $eng): ?>
+                <option value="<?= e($eng) ?>" <?= $curEr === $eng ? 'selected' : '' ?>><?= e($eng) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </div>
     <button type="submit" class="btn-secondary" style="font-size:0.8rem;height:32px;align-self:flex-end"><?= e(t('clicks.apply')) ?></button>
+    <!-- Pin the filters currently applied as this operator's own default view.
+         Posting with everything unset clears the preference. -->
+    <?php $savedView = $saved_view ?? []; ?>
+    <button type="submit" form="save-view-form" class="btn-ghost"
+            title="<?= e(t('clicks.save_view_hint')) ?>"
+            style="font-size:0.8rem;height:32px;align-self:flex-end;padding:0 12px;color:var(--color-muted);border:1px solid var(--color-border);border-radius:4px;background:none;cursor:pointer">
+        <?= e($savedView !== [] ? t('clicks.save_view_update') : t('clicks.save_view')) ?>
+    </button>
     <a href="<?= e(url('/admin/clicks')) ?>" class="btn-ghost" style="font-size:0.8rem;height:32px;align-self:flex-end;display:inline-flex;align-items:center;padding:0 12px;color:var(--color-muted);text-decoration:none;border:1px solid var(--color-border);border-radius:4px"><?= e(t('clicks.reset')) ?></a>
 
     <!-- Columns gear — opens drawer panel -->
@@ -314,19 +381,36 @@ require __DIR__ . '/../../_partials/page-header.php';
             </div>
 
             <footer class="drawer-footer">
-                <form method="post" action="<?= e(url('/admin/clicks/columns/reset')) ?>" style="margin-right:auto">
-                    <?= csrf_field($csrf_token) ?>
-                    <button type="submit" class="btn-ghost" style="font-size:0.8rem"><?= e(t('clicks.columns_reset')) ?></button>
-                </form>
+                <!-- The drawer sits inside the GET filter form, and forms cannot
+                     nest: these controls point at sibling POST forms below via
+                     form="", so neither they nor a CSRF token join the filters. -->
+                <button type="submit" form="clicks-columns-reset-form" class="btn-ghost" style="font-size:0.8rem;margin-right:auto"><?= e(t('clicks.columns_reset')) ?></button>
                 <button type="button" class="btn-secondary" @click="open = false" style="font-size:0.8rem"><?= e(t('clicks.cancel')) ?></button>
-                <form method="post" action="<?= e(url('/admin/clicks/columns')) ?>">
-                    <?= csrf_field($csrf_token) ?>
-                    <input type="hidden" name="columns" :value="JSON.stringify(visibleKeys())">
-                    <button type="submit" class="btn" style="font-size:0.8rem"><?= e(t('clicks.columns_save')) ?></button>
-                </form>
+                <input type="hidden" name="columns" form="clicks-columns-save-form" :value="JSON.stringify(visibleKeys())">
+                <button type="submit" form="clicks-columns-save-form" class="btn" style="font-size:0.8rem"><?= e(t('clicks.columns_save')) ?></button>
             </footer>
         </aside>
     </div>
+</form>
+
+<form id="clicks-columns-reset-form" method="post" action="<?= e(url('/admin/clicks/columns/reset')) ?>" style="display:none">
+    <?= csrf_field($csrf_token) ?>
+</form>
+<form id="clicks-columns-save-form" method="post" action="<?= e(url('/admin/clicks/columns')) ?>" style="display:none">
+    <?= csrf_field($csrf_token) ?>
+</form>
+
+<?php
+// Sibling form (HTML forms cannot nest) carrying the filters that are actually
+// in effect right now. Only the keys the controller accepts as saveable are
+// sent; posting them all empty is how the operator clears their default.
+$saveableView = ['is_trash', 'bot_view', 'search', 'entry_ref', 'fp_js_has'];
+?>
+<form id="save-view-form" method="post" action="<?= e(url('/admin/clicks/view')) ?>" style="display:none">
+    <?= csrf_field($csrf_token) ?>
+    <?php foreach ($saveableView as $k): ?>
+        <input type="hidden" name="<?= e($k) ?>" value="<?= e((string)($filters[$k] ?? '')) ?>">
+    <?php endforeach; ?>
 </form>
 
 <?php if (empty($items)): ?>
@@ -339,6 +423,33 @@ require __DIR__ . '/../../_partials/page-header.php';
     require __DIR__ . '/../../_partials/empty-state.php';
     ?>
 <?php else: ?>
+    <?php
+    // Top lists — same markup as /admin/pixel.
+    $topList = static function (string $title, array $rows): void {
+        $max = max(array_map(static fn (array $r): int => (int)$r['clicks'], $rows) ?: [1]); ?>
+        <div style="padding:14px 16px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">
+            <div class="eyebrow" style="margin-bottom:10px"><?= e($title) ?></div>
+            <?php foreach ($rows as $i => $r): ?>
+                <div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-family:var(--font-sans);font-size:0.82rem">
+                    <span style="font-family:var(--font-mono);color:var(--color-faintest);font-size:0.7rem;min-width:14px;text-align:right"><?= ($i + 1) ?></span>
+                    <span style="font-family:var(--font-mono);font-size:0.78rem;color:var(--color-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" title="<?= e((string)$r['label']) ?>"><?= e((string)$r['label']) ?></span>
+                    <div style="width:80px;height:4px;background:var(--color-stone-100);border-radius:2px;overflow:hidden">
+                        <div style="width:<?= max(8, (int)((int)$r['clicks'] / $max * 100)) ?>%;height:100%;background:var(--color-terra-400)"></div>
+                    </div>
+                    <span style="font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:0.78rem;color:var(--color-muted);min-width:32px;text-align:right"><?= (int)$r['clicks'] ?></span>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    <?php };
+    $topLanders = $topLanders ?? [];
+    $topOffers = $topOffers ?? [];
+    ?>
+    <?php if ($topLanders !== [] || $topOffers !== []): ?>
+    <div class="adapt-stack" style="display:grid;grid-template-columns:<?= $topLanders !== [] && $topOffers !== [] ? '1fr 1fr' : '1fr' ?>;gap:12px;margin-bottom:18px">
+        <?php if ($topLanders !== []) $topList(t('clicks.top_landers'), $topLanders); ?>
+        <?php if ($topOffers !== []) $topList(t('clicks.top_offers'), $topOffers); ?>
+    </div>
+    <?php endif; ?>
     <div class="tbl-wrap">
         <div class="tbl-scroll">
             <table class="tbl">
@@ -489,8 +600,12 @@ require __DIR__ . '/../../_partials/page-header.php';
         'is_uniq'     => isset($filters['is_uniq']) && $filters['is_uniq'] !== null ? ($filters['is_uniq'] ? '1' : '0') : null,
         'is_trash'    => ($filters['is_trash'] ?? 'hide') !== 'hide' ? $filters['is_trash'] : null,
         'search'      => $filters['search'] ?? null,
+        'entry_ref'   => $filters['entry_ref'] ?? null,
         'fp_js'       => $filters['fp_js'] ?? null,
         'fp_js_has'   => $filters['fp_js_has'] ?? null,
+        'from'        => $filters['from'] ?? null,
+        'to'          => $filters['to'] ?? null,
+        'range'       => $filters['range'] ?? null,
     ], fn ($v) => $v !== null && $v !== '');
     require __DIR__ . '/../../_partials/pagination.php';
     ?>

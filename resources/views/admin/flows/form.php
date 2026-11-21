@@ -4,6 +4,7 @@
 /** @var list<\App\Admin\Repository\Offer> $offers */
 /** @var array<string,string> $errors */
 /** @var string $csrf_token */
+/** @var string $app_url */
 $action   = $flow === null
     ? url('/admin/campaigns/' . $campaign->id . '/flows')
     : url('/admin/campaigns/' . $campaign->id . '/flows/' . $flow->id);
@@ -82,6 +83,20 @@ $countries = $_lang === 'en' ? $countriesEn : $countriesRu;
         <input type="hidden" name="target_offers" x-ref="targetOffersField">
         <input type="hidden" name="schema_config" x-ref="schemaConfigField">
 
+        <?php if ($flow !== null): ?>
+        <!-- Section: Test link -->
+        <div class="form-section">
+            <span class="form-section-label"><?= e(t('test_link.flow_title')) ?></span>
+            <?php
+            $testKey = \App\Shared\TestLink::flowKey($flow->id);
+            $testBase = $app_url . '/' . $campaign->slug;
+            $testCompact = false;
+            $testHint = t('test_link.flow_hint');
+            require __DIR__ . '/../../_partials/test-link.php';
+            ?>
+        </div>
+        <?php endif; ?>
+
         <!-- Section: Basic -->
         <div class="form-section">
             <span class="form-section-label"><?= e(t('flows.section_basic')) ?></span>
@@ -120,6 +135,7 @@ $countries = $_lang === 'en' ? $countriesEn : $countriesRu;
                     </select>
                     <p style="font-size:0.78rem;color:var(--color-stone-500);margin:4px 0 0;font-family:var(--font-sans)"><?= e(t('flows.sticky_hint')) ?></p>
                 </div>
+
             </div>
         </div>
 
@@ -219,9 +235,11 @@ $countries = $_lang === 'en' ? $countriesEn : $countriesRu;
                                 </select>
                             </template>
                             <template x-if="cond.field === 'country'">
+                                <!-- `in`/`not_in` take a comma-separated list (FilterCompiler::inList
+                                     splits on commas), so the single-ISO-code cap must lift for them. -->
                                 <input x-model="cond.value" list="list-country" class="input" style="flex:1;font-size:0.8rem;font-family:var(--font-mono)"
-                                       placeholder="<?= e(t('filter_values.placeholder.country')) ?>"
-                                       autocomplete="off" maxlength="2">
+                                       :placeholder="isListOp(cond.op) ? '<?= e(t('filter_values.placeholder.country_list')) ?>' : '<?= e(t('filter_values.placeholder.country')) ?>'"
+                                       autocomplete="off" :maxlength="isListOp(cond.op) ? null : 2">
                             </template>
                             <template x-if="!['is_bot','is_uniq','day_of_week','device','os','browser','lang','country'].includes(cond.field)">
                                 <input x-model="cond.value" :list="'list-' + cond.field" class="input" style="flex:1;font-size:0.8rem;font-family:var(--font-mono)" placeholder="value">
