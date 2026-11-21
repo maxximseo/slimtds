@@ -73,6 +73,7 @@ test('admin layout includes the workspace bar and the v0 white design system', f
         'offers_count' => 2,
         'flows_count' => 3,
         'recent_events' => [],
+        'admin_id' => 1,
     ]);
 
     expect($html)->toContain('workspace-bar')
