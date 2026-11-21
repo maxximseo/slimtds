@@ -16,6 +16,7 @@ final class ColumnPreferences
         'campaign'     => ['label_key' => 'clicks.col.campaign',     'sortable' => 'cmp.slug',      'default' => true],
         'flow'         => ['label_key' => 'clicks.col.flow',         'sortable' => 'fl.name',       'default' => true],
         'offer'        => ['label_key' => 'clicks.col.offer',        'sortable' => null,            'default' => true],
+        'referer'      => ['label_key' => 'clicks.col.referer',      'sortable' => null,            'default' => true],
         'visitor'      => ['label_key' => 'clicks.col.visitor',      'sortable' => null,            'default' => false],
         'fp_js'        => ['label_key' => 'clicks.col.fp_js',        'sortable' => null,            'default' => false],
         'ip'           => ['label_key' => 'clicks.col.ip',           'sortable' => null,            'default' => true],
@@ -32,7 +33,6 @@ final class ColumnPreferences
         'bot_name'     => ['label_key' => 'clicks.col.bot_name',     'sortable' => null,            'default' => false],
         'is_uniq'      => ['label_key' => 'clicks.col.is_uniq',      'sortable' => null,            'default' => false],
         'ua'           => ['label_key' => 'clicks.col.ua',           'sortable' => null,            'default' => false],
-        'referer'      => ['label_key' => 'clicks.col.referer',      'sortable' => null,            'default' => true],
         // Entry source recorded by the pixel — shown next to `referer`, not
         // instead of it, and off by default so the stock view is unchanged.
         'entry_referer' => ['label_key' => 'clicks.col.entry_referer', 'sortable' => null,          'default' => false],

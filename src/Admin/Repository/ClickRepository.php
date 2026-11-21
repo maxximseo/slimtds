@@ -645,9 +645,10 @@ final class ClickRepository
         }
         // Search-engine referer filter (any | <engine> | none)
         if (!empty($filters['search'])) {
+            $entrySource = self::ENTRY_SOURCE_SQL;
             [$frag, $bind] = SearchEngine::sqlFilterCompact(
                 (string)$filters['search'],
-                SearchEngine::clickEntryRefererSql('c'),
+                "({$entrySource})",
                 'se',
             );
             if ($frag !== '') {

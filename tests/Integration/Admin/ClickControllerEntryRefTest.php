@@ -72,7 +72,7 @@ function clicksHtml(array $query): string
 }
 
 test('without the filter both clicks are listed', function (): void {
-    $html = clicksHtml([]);
+    $html = clicksHtml(['search' => '']);
     expect($html)->toContain('2.2.2.1');
     expect($html)->toContain('2.2.2.2');
 });
@@ -84,7 +84,7 @@ test('entry_ref reaches the repository and narrows the list', function (): void 
 });
 
 test('an empty entry_ref is normalised away rather than filtering everything out', function (): void {
-    $html = clicksHtml(['entry_ref' => '']);
+    $html = clicksHtml(['entry_ref' => '', 'search' => '']);
     expect($html)->toContain('2.2.2.1');
     expect($html)->toContain('2.2.2.2');
 });

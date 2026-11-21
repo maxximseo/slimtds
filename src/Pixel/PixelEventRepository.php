@@ -21,6 +21,7 @@ final class PixelEventRepository
                     country, city, asn, screen_w, screen_h, timezone, lang, props, created_at
              FROM stats.pixel_events
              WHERE campaign_id = :c
+               AND LOWER(country) IS DISTINCT FROM 'cn'
                AND created_at >= now() - interval '7 days'
              ORDER BY created_at DESC
              LIMIT :lim",
@@ -37,7 +38,8 @@ final class PixelEventRepository
                 count(*) FILTER (WHERE created_at >= now() - interval '7 days')    AS w,
                 count(*) FILTER (WHERE created_at >= now() - interval '30 days')   AS m
              FROM stats.pixel_events
-             WHERE campaign_id = :c",
+             WHERE campaign_id = :c
+               AND LOWER(country) IS DISTINCT FROM 'cn'",
             ['c' => $campaignId],
         ) ?? ['d' => 0, 'w' => 0, 'm' => 0];
         return [

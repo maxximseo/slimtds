@@ -172,7 +172,7 @@ final class PostbackController
             ['id' => $lookupClickId],
         );
         if ($clickRow === null) {
-            if ($tokenScope === 'network' && $networkConfig !== null && $networkConfig['fallback_campaign_id'] !== null) {
+            if ($tokenScope === 'network' && $networkConfig['fallback_campaign_id'] !== null) {
                 return $this->recordUnattributedNetworkPostback(
                     $response,
                     $network,

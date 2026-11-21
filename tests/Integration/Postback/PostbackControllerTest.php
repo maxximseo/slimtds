@@ -269,6 +269,7 @@ test('network token rejects a click whose offer host belongs to another network'
 
 test('network token requires a bound offer on the click', function (): void {
     $cid = clickId($this);
+    $this->db->execute('UPDATE stats.clicks SET offer_id = NULL WHERE id = :id', ['id' => $cid]);
     $_ENV['NETWORK_POSTBACKS'] = json_encode([
         'example' => [
             'token' => str_repeat('c', 40),
