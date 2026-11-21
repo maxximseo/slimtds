@@ -41,7 +41,11 @@ final class ClickRepository
      * no source at all, is in neither `any` nor `none`.
      */
     private const ENTRY_SOURCE_SQL = <<<'SQL'
-        SELECT COALESCE(pe.entry_referer, pe.referer)
+        SELECT CASE
+            WHEN pe.entry_referer IS NOT NULL THEN pe.entry_referer
+            WHEN %LEGACY_SEARCH_FILTER% THEN pe.referer
+            ELSE NULL
+        END AS entry_referer
         FROM stats.pixel_events pe
         WHERE pe.campaign_id = c.campaign_id
           AND pe.visitor_uuid = c.visitor_uuid
@@ -50,6 +54,13 @@ final class ClickRepository
         ORDER BY pe.created_at DESC, pe.id DESC
         LIMIT 1
         SQL;
+
+    /** @return array{0:string,1:array<string,string>} */
+    private static function entrySourceSql(): array
+    {
+        [$legacy, $params] = SearchEngine::sqlFilter('any', 'pe.referer', 'legacy');
+        return [str_replace('%LEGACY_SEARCH_FILTER%', $legacy, self::ENTRY_SOURCE_SQL), $params];
+    }
 
     /**
      * Dimension => SQL expression, for breakdown(). The key is the only thing a
@@ -86,7 +97,8 @@ final class ClickRepository
         $params['limit'] = $perPage;
         $params['offset'] = $offset;
 
-        $entrySource = self::ENTRY_SOURCE_SQL;
+        [$entrySource, $entryParams] = self::entrySourceSql();
+        $params = array_merge($params, $entryParams);
         return $this->db->fetchAll(
             "SELECT c.id, c.campaign_id, c.flow_id, c.offer_id, c.visitor_uuid,
                     host(c.ip) AS ip, c.country, c.region, c.city, c.asn, c.isp,
@@ -645,7 +657,8 @@ final class ClickRepository
         }
         // Search-engine referer filter (any | <engine> | none)
         if (!empty($filters['search'])) {
-            $entrySource = self::ENTRY_SOURCE_SQL;
+            [$entrySource, $entryParams] = self::entrySourceSql();
+            $params = array_merge($params, $entryParams);
             [$frag, $bind] = SearchEngine::sqlFilterCompact(
                 (string)$filters['search'],
                 "({$entrySource})",
@@ -668,9 +681,9 @@ final class ClickRepository
                 // window": otherwise a click could display one source and match
                 // a filter for another. The row is picked once in the derived
                 // table, so the engine patterns test a single value.
-                $sel = self::ENTRY_SOURCE_SQL;
+                [$sel, $entryParams] = self::entrySourceSql();
                 $cond[] = "EXISTS (SELECT 1 FROM ({$sel}) sel WHERE {$frag})";
-                $params = array_merge($params, $bind);
+                $params = array_merge($params, $entryParams, $bind);
             }
         }
         // IP substring match — typed in the filter bar (full IP or a prefix).
