@@ -11,17 +11,17 @@ $size    = $size    ?? 24;
 $variant = $variant ?? 'light';
 
 if ($variant === 'dark') {
-    $bg     = '#1a1917';   // stone-900
-    $chip   = '#fafaf7';   // stone-50
-    $stroke = '#b54f17';   // terra-500
-    $letter = '#b54f17';
-    $trace  = '#d9713e';   // terra-300
+    $bg     = 'var(--color-stone-900)';
+    $chip   = 'var(--color-stone-50)';
+    $stroke = 'var(--color-terra-400)';
+    $letter = 'var(--color-terra-300)';
+    $trace  = 'var(--color-terra-400)';
 } else {
     $bg     = 'transparent';
-    $chip   = '#1a1917';   // dark chip on light bg
-    $stroke = '#b54f17';
-    $letter = '#fafaf7';   // light letter on dark chip
-    $trace  = '#b54f17';   // terra-500 on light bg for stronger contrast
+    $chip   = 'var(--color-terra-500)';
+    $stroke = 'var(--color-terra-600)';
+    $letter = '#ffffff';
+    $trace  = 'var(--color-terra-400)';
 }
 ?>
 <svg width="<?= (int)$size ?>" height="<?= (int)$size ?>" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
