@@ -1392,6 +1392,23 @@ html[data-theme="dark"] {
     word-break: break-all;
     vertical-align: top;
   }
+  .source-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    color: var(--color-faint);
+    vertical-align: top;
+  }
+  .source-link:hover { color: var(--accent); }
+  .source-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-radius: 2px;
+  }
+  .source-link svg { width: 13px; height: 13px; }
   @media (max-width: 640px) {
     .url-full { max-width: 220px; }
   }

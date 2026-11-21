@@ -45,8 +45,19 @@ $chip = function (string $href, string $inner, string $title = ''): string {
         . '>' . $inner . '</a>';
 };
 
+$sourceLink = static function (string $url): string {
+    $scheme = parse_url($url, PHP_URL_SCHEME);
+    if (!is_string($scheme) || !in_array(strtolower($scheme), ['http', 'https'], true)) return '';
+    return '<a class="source-link" href="' . e($url) . '" target="_blank" rel="noopener noreferrer"'
+        . ' aria-label="Open source in a new tab" title="Open source in a new tab">'
+        . '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+        . ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        . '<path d="M14 3h7v7M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>'
+        . '</svg></a>';
+};
+
 // Cell renderer — output the right HTML for each column key.
-$renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): string {
+$renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip, $sourceLink): string {
     switch ($key) {
         case 'time':
             return '<span class="meta-mono" style="white-space:nowrap">' . e(substr((string)$r['created_at'], 0, 19)) . '</span>';
@@ -131,7 +142,7 @@ $renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): s
             $ref = (string)($r['referer'] ?? '');
             if ($ref === '') return '<span style="color:var(--color-faintest)">—</span>';
             $eng = \App\Shared\Referer\SearchEngine::classify($ref);
-            $body = '<span class="meta-mono url-full" title="' . e($ref) . '" style="vertical-align:top">' . e($ref) . '</span>';
+            $body = $sourceLink($ref) . '<span class="meta-mono url-full" title="' . e($ref) . '" style="vertical-align:top">' . e($ref) . '</span>';
             if ($eng !== null) {
                 $body = $chip($filterUrl(['search' => $eng]),
                     '<span class="badge badge-info">' . e($eng) . '</span>',
@@ -146,7 +157,7 @@ $renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): s
             $eref = (string)($r['entry_referer'] ?? '');
             if ($eref === '') return '<span style="color:var(--color-faintest)">—</span>';
             $eng = \App\Shared\Referer\SearchEngine::classify($eref);
-            $body = '<span class="meta-mono url-full" title="' . e($eref) . '" style="vertical-align:top">' . e($eref) . '</span>';
+            $body = $sourceLink($eref) . '<span class="meta-mono url-full" title="' . e($eref) . '" style="vertical-align:top">' . e($eref) . '</span>';
             if ($eng !== null) {
                 $body = $chip($filterUrl(['entry_ref' => $eng]),
                     '<span class="badge badge-info">' . e($eng) . '</span>',

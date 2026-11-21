@@ -86,6 +86,29 @@ final class ClickRepository
     public function __construct(private readonly Connection $db) {}
 
     /**
+     * All six read models share one snapshot. PostgreSQL's JIT otherwise spends
+     * about two seconds compiling the large search-source expression per query.
+     *
+     * @param array<string,mixed> $filters
+     * @return array{items:list<array<string,mixed>>,total:int,timeline:list<array{hour:string,clicks:int,uniq:int,bot:int}>,summary:array{clicks:int,uniq_visitors:int,uniq_fp:int,conversions:int,approved:int,payout:string},topLanders:list<array{label:string,clicks:int}>,topOffers:list<array{label:string,clicks:int}>}
+     */
+    public function overview(int $page, int $perPage, array $filters, string $orderBy, TimelineWindow $window): array
+    {
+        return $this->db->transactional(function () use ($page, $perPage, $filters, $orderBy, $window): array {
+            $this->db->execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            $this->db->execute('SET LOCAL jit = off');
+            return [
+                'items' => $this->page($page, $perPage, $filters, $orderBy),
+                'total' => $this->count($filters),
+                'timeline' => $this->timeline($filters, $window),
+                'summary' => $this->summary($filters),
+                'topLanders' => $this->topLanders($filters, 10),
+                'topOffers' => $this->topOffers($filters, 10),
+            ];
+        });
+    }
+
+    /**
      * @param array{campaign_id?:?string, country?:?string, device?:?string, is_bot?:?bool, is_uniq?:?bool, since?:?string, is_trash?:?string, from?:?string, to?:?string, search?:?string, entry_ref?:?string, ip?:?string, click_id?:?string, visitor?:?string, fp_js?:?string} $filters
      * @param string $orderBy SQL fragment, must come from a whitelist (e.g. "c.created_at DESC")
      * @return list<array<string,mixed>>
