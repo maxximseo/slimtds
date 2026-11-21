@@ -63,6 +63,29 @@ test('asset() resolves from manifest', function (): void {
     expect($html)->toMatch('~/assets/app\.[a-f0-9]+\.js~');
 });
 
+test('admin layout includes the workspace bar and the v0 white design system', function (): void {
+    $html = $this->view->render('admin/dashboard', [
+        'csrf_token' => 'x',
+        'lang' => 'ru',
+        '__layout__' => 'layouts/admin',
+        'title' => 'Панель',
+        'campaigns_count' => 1,
+        'offers_count' => 2,
+        'flows_count' => 3,
+        'recent_events' => [],
+        'admin_id' => 1,
+    ]);
+
+    expect($html)->toContain('workspace-bar')
+        ->and($html)->toContain('Рабочее пространство')
+        ->and($html)->toContain('family=Inter');
+
+    $css = file_get_contents(dirname(__DIR__, 3) . '/resources/css/app.css');
+    expect($css)->toContain('--color-terra-500: #2563eb')
+        ->and($css)->toContain('.workspace-bar')
+        ->and($css)->toContain('a:focus-visible');
+});
+
 test('url() normalizes slashes', function (): void {
     expect(url('/admin'))->toBe('/admin');
     expect(url('admin'))->toBe('/admin');

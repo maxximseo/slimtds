@@ -12,7 +12,7 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Manrope:wght@200..800&family=JetBrains+Mono:wght@100..800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@100..800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= e(asset('app.css')) ?>">
     <script defer src="<?= e(asset('app.js')) ?>"></script>
 
@@ -135,6 +135,12 @@
     <!-- ── Main ─────────────────────────────────────────────────────────── -->
     <div style="grid-area:main;min-width:0;display:flex;flex-direction:column">
         <main style="flex:1;padding:32px 32px 40px;min-width:0">
+            <div class="workspace-bar">
+                <span><?= e(t('workspace')) ?></span>
+                <span class="workspace-separator">/</span>
+                <strong><?= e($title) ?></strong>
+                <span class="workspace-env"><?= e(strtoupper((string)($_ENV['APP_ENV'] ?? 'dev'))) ?></span>
+            </div>
             <?= $__content__ ?>
         </main>
     </div>

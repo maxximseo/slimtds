@@ -744,3 +744,5 @@ test_link:
   flow_hint: 'Sends the request straight into this flow, skipping its filters — works even while the flow is switched off. Tests the offers and schema, not the filters.'
   extras: '&_geo=de swaps the country; drop &_dbg=1 to get the real redirect (the trace stays in the X-TDS-Debug header).'
   disabled: Test links are off — APP_SECRET is not set.
+
+workspace: Workspace
