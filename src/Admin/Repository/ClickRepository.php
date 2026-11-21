@@ -41,7 +41,7 @@ final class ClickRepository
      * no source at all, is in neither `any` nor `none`.
      */
     private const ENTRY_SOURCE_SQL = <<<'SQL'
-        SELECT pe.entry_referer
+        SELECT COALESCE(pe.entry_referer, pe.referer)
         FROM stats.pixel_events pe
         WHERE pe.campaign_id = c.campaign_id
           AND pe.visitor_uuid = c.visitor_uuid

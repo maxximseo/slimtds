@@ -78,6 +78,26 @@ test('entry source is the one the visit repeats across its pageviews', function 
         ->and($byVisitor[V_DIRECT]['entry_referer'])->toBeNull();
 });
 
+test('legacy pixel referer is used when the newer entry field is empty', function (): void {
+    $legacy = '00000000-0000-7000-8000-0000000000e8';
+    $this->db->execute(
+        "INSERT INTO stats.pixel_events (campaign_id, visitor_uuid, referer, entry_referer, created_at)
+         VALUES (:c, :v, 'https://www.google.com/search?q=legacy', NULL, now() - interval '3 minutes')",
+        ['c' => ENTRY_CAMPAIGN, 'v' => $legacy],
+    );
+    $this->db->execute(
+        "INSERT INTO stats.clicks (campaign_id, visitor_uuid, ip, referer, is_bot, created_at)
+         VALUES (:c, :v, '1.1.1.6', 'https://lander.test/step-2', false, now())",
+        ['c' => ENTRY_CAMPAIGN, 'v' => $legacy],
+    );
+
+    $rows = $this->repo->page(1, 50, entryFilters());
+    $row = current(array_filter($rows, fn ($r) => $r['visitor_uuid'] === $legacy));
+    expect($row['entry_referer'])->toBe('https://www.google.com/search?q=legacy')
+        ->and($this->repo->count(entryFilters(['entry_ref' => 'any'])))->toBe(2)
+        ->and($this->repo->count(entryFilters(['search' => 'any'])))->toBe(2);
+});
+
 test('default listing applies no entry-source predicate', function (): void {
     expect($this->repo->count(entryFilters()))->toBe(2);
 });
