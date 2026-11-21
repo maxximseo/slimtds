@@ -70,6 +70,15 @@ test('click page and external entry source remain separate columns', function ()
         ->and($html)->toContain('https://www.google.com/search?q=loan');
 });
 
+test('long click page URLs render fully without truncation', function (): void {
+    $url = 'https://example.com/path/abcdefghijklmnopqrstuvwxyz0123456789';
+    $html = clicksPage([clickRow(['referer' => $url, 'entry_referer' => $url])]);
+
+    expect($html)->toContain($url)
+        ->and($html)->toContain('meta-mono url-full')
+        ->and($html)->not->toContain('max-width:200px');
+});
+
 test('a click with no entry source renders a dash, not an empty cell', function (): void {
     // The bare character also appears in the filter options, so assert on the
     // cell's own markup: checking for '—' alone passes even on an empty cell.

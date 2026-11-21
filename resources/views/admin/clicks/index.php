@@ -126,12 +126,12 @@ $renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): s
                     'Filter to repeat visitors');
         case 'ua':
             $ua = (string)($r['user_agent'] ?? '');
-            return '<span class="meta-mono" title="' . e($ua) . '" style="display:inline-block;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($ua) . '</span>';
+            return '<span class="meta-mono url-full" title="' . e($ua) . '" style="display:inline-block;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($ua) . '</span>';
         case 'referer':
             $ref = (string)($r['referer'] ?? '');
             if ($ref === '') return '<span style="color:var(--color-faintest)">—</span>';
             $eng = \App\Shared\Referer\SearchEngine::classify($ref);
-            $body = '<span class="meta-mono" title="' . e($ref) . '" style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($ref) . '</span>';
+            $body = '<span class="meta-mono url-full" title="' . e($ref) . '" style="vertical-align:top">' . e($ref) . '</span>';
             if ($eng !== null) {
                 $body = $chip($filterUrl(['search' => $eng]),
                     '<span class="badge badge-info">' . e($eng) . '</span>',
@@ -146,7 +146,7 @@ $renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): s
             $eref = (string)($r['entry_referer'] ?? '');
             if ($eref === '') return '<span style="color:var(--color-faintest)">—</span>';
             $eng = \App\Shared\Referer\SearchEngine::classify($eref);
-            $body = '<span class="meta-mono" title="' . e($eref) . '" style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($eref) . '</span>';
+            $body = '<span class="meta-mono url-full" title="' . e($eref) . '" style="vertical-align:top">' . e($eref) . '</span>';
             if ($eng !== null) {
                 $body = $chip($filterUrl(['entry_ref' => $eng]),
                     '<span class="badge badge-info">' . e($eng) . '</span>',
@@ -172,7 +172,7 @@ $renderCell = function (string $key, array $r) use ($flag, $filterUrl, $chip): s
             $u = (string)($r['out_url'] ?? '');
             return $u === ''
                 ? '<span style="color:var(--color-faintest)">—</span>'
-                : '<span class="meta-mono" title="' . e($u) . '" style="display:inline-block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($u) . '</span>';
+                : '<span class="meta-mono url-full" title="' . e($u) . '" style="display:inline-block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">' . e($u) . '</span>';
         case 'status':
             $st = (int)($r['http_status'] ?? 0);
             $cls = $st >= 400 ? 'badge-danger' : ($st >= 300 ? 'badge-info' : 'badge-success');
