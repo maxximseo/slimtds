@@ -79,6 +79,24 @@ test('long click page URLs render fully without truncation', function (): void {
         ->and($html)->not->toContain('max-width:200px');
 });
 
+test('http sources have a compact safe link before their full URL', function (): void {
+    $url = 'https://example.com/path/abcdefghijklmnopqrstuvwxyz0123456789';
+    $html = clicksPage([clickRow(['referer' => $url, 'entry_referer' => $url])]);
+
+    expect(substr_count($html, 'class="source-link"'))->toBe(2)
+        ->and($html)->toContain('class="source-link" href="' . $url . '" target="_blank" rel="noopener noreferrer"')
+        ->and($html)->toContain('aria-label="Open source in a new tab"')
+        ->and($html)->toContain('aria-hidden="true"');
+});
+
+test('non-web source text is never rendered as a clickable link', function (): void {
+    $html = clicksPage([clickRow(['referer' => 'javascript:alert(1)'])], [], ['referer']);
+
+    expect($html)->toContain('javascript:alert(1)')
+        ->and($html)->not->toContain('class="source-link"')
+        ->and($html)->not->toContain('href="javascript:alert(1)"');
+});
+
 test('a click with no entry source renders a dash, not an empty cell', function (): void {
     // The bare character also appears in the filter options, so assert on the
     // cell's own markup: checking for '—' alone passes even on an empty cell.

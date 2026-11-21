@@ -112,14 +112,15 @@ final class ClickController
         $orderColumn = $this->columns->sortColumn() ?? 'c.created_at';
         $orderBy = $orderColumn . ' ' . ($sort['dir'] === 'asc' ? 'ASC' : 'DESC');
 
-        $items = $this->repo->page($page, $perPage, $filters, $orderBy);
-        $total = $this->repo->count($filters);
-        $pages = max(1, (int)ceil($total / $perPage));
         $window = TimelineWindow::fromFilters($filters, self::DEFAULT_DAYS);
-        $timeline = $this->repo->timeline($filters, $window);
-        $summary = $this->repo->summary($filters);
-        $topLanders = $this->repo->topLanders($filters, 10);
-        $topOffers = $this->repo->topOffers($filters, 10);
+        $overview = $this->repo->overview($page, $perPage, $filters, $orderBy, $window);
+        $items = $overview['items'];
+        $total = $overview['total'];
+        $pages = max(1, (int)ceil($total / $perPage));
+        $timeline = $overview['timeline'];
+        $summary = $overview['summary'];
+        $topLanders = $overview['topLanders'];
+        $topOffers = $overview['topOffers'];
 
         // When the user is drilling into a single click via ?click_id=, also
         // load the visitor card + journey so they can see the full pre/post

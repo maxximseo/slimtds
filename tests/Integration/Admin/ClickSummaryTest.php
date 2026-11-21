@@ -91,3 +91,15 @@ test('top landers and offers rank by clicks and leave out clicks that have neith
     ])->and($this->repo->topOffers($this->all, 1))->toHaveCount(1)
       ->and($this->repo->topLanders(['bot_view' => 'hide'] + $this->all))->toBe([['label' => 'lander-a.test', 'clicks' => 3]]);
 });
+
+test('overview returns exactly the six independent read models', function (): void {
+    $window = \App\Shared\Time\TimelineWindow::fromFilters($this->all, 7);
+    $overview = $this->repo->overview(1, 50, $this->all, 'c.created_at DESC', $window);
+
+    expect($overview['items'])->toBe($this->repo->page(1, 50, $this->all))
+        ->and($overview['total'])->toBe($this->repo->count($this->all))
+        ->and($overview['timeline'])->toBe($this->repo->timeline($this->all, $window))
+        ->and($overview['summary'])->toBe($this->repo->summary($this->all))
+        ->and($overview['topLanders'])->toBe($this->repo->topLanders($this->all, 10))
+        ->and($overview['topOffers'])->toBe($this->repo->topOffers($this->all, 10));
+});
