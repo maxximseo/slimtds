@@ -5,6 +5,26 @@ declare(strict_types=1);
 use App\Shared\Auth\PasswordHasher;
 use App\Shared\Db\Partitions;
 use DI\ContainerBuilder;
+use Psr\Container\ContainerInterface;
+
+/**
+ * Update-check configuration. Read in one place so the web process and the
+ * cron process cannot disagree about whether checking is on or which
+ * repository is being checked.
+ */
+if (!function_exists('updateCheckEnabled')) {
+    function updateCheckEnabled(): bool
+    {
+        return filter_var($_ENV['UPDATE_CHECK_ENABLED'] ?? 'true', FILTER_VALIDATE_BOOL);
+    }
+}
+if (!function_exists('updateCheckRepo')) {
+    function updateCheckRepo(): string
+    {
+        $r = $_ENV['UPDATE_CHECK_REPO'] ?? '';
+        return is_string($r) && $r !== '' ? $r : 'izzipizzy/slimtds';
+    }
+}
 
 return static function (): \DI\Container {
     $builder = new ContainerBuilder();
@@ -65,6 +85,7 @@ return static function (): \DI\Container {
         \App\Admin\Form\FlowForm::class => \DI\autowire(),
         \App\Admin\Controller\FlowController::class => \DI\autowire(),
         \App\Admin\Repository\ClickRepository::class => \DI\autowire(),
+        \App\Admin\Repository\ViewPreferenceRepository::class => \DI\autowire(),
         \App\Admin\Controller\ClickController::class => \DI\autowire(),
         \App\Admin\Repository\ConversionRepository::class => \DI\autowire(),
         \App\Admin\Controller\ConversionController::class => \DI\autowire(),
@@ -75,6 +96,7 @@ return static function (): \DI\Container {
         \App\Shared\Notification\NotificationRegistry::class => \DI\autowire(),
         \App\Admin\Controller\SettingsController::class => \DI\autowire(),
         \App\Admin\Controller\BackupController::class => \DI\autowire(),
+        \App\Admin\Controller\McpSettingsController::class => \DI\autowire(),
         \App\Stats\StatsRepository::class => \DI\autowire(),
         \App\Admin\Controller\StatsController::class => \DI\autowire(),
         \App\Admin\Middleware\PasswordChangeRequiredMiddleware::class => \DI\autowire(),
@@ -104,8 +126,44 @@ return static function (): \DI\Container {
             ),
         \App\Postback\PostbackOutbox::class => \DI\autowire(),
         \App\Postback\PostbackController::class => \DI\autowire(),
+
+        // MCP (read-only traffic analysis)
+        \App\Mcp\ApiKeyService::class => \DI\autowire(),
+        \App\Mcp\ReportFilters::class => \DI\autowire(),
+        \App\Mcp\PixelReportRepository::class => \DI\autowire(),
+        \App\Mcp\BearerAuthMiddleware::class => \DI\autowire(),
+        \App\Mcp\McpController::class => \DI\autowire(),
+        \App\Mcp\SkillController::class => \DI\autowire(),
+        \App\Mcp\PromptRegistry::class => \DI\autowire(),
+        \App\Mcp\Tool\ListCampaignsTool::class => \DI\autowire(),
+        \App\Mcp\Tool\GetCampaignTool::class => \DI\autowire(),
+        \App\Mcp\Tool\TrafficSummaryTool::class => \DI\autowire(),
+        \App\Mcp\Tool\TrafficTimelineTool::class => \DI\autowire(),
+        \App\Mcp\Tool\TrafficBreakdownTool::class => \DI\autowire(),
+        \App\Mcp\Tool\ListClicksTool::class => \DI\autowire(),
+        \App\Mcp\Tool\VisitorJourneyTool::class => \DI\autowire(),
+        \App\Mcp\Tool\ConversionsSummaryTool::class => \DI\autowire(),
+        \App\Mcp\Tool\PixelSummaryTool::class => \DI\autowire(),
+        \App\Mcp\ToolRegistry::class => static fn (ContainerInterface $c): \App\Mcp\ToolRegistry => new \App\Mcp\ToolRegistry(
+            $c->get(\App\Mcp\Tool\ListCampaignsTool::class),
+            $c->get(\App\Mcp\Tool\GetCampaignTool::class),
+            $c->get(\App\Mcp\Tool\TrafficSummaryTool::class),
+            $c->get(\App\Mcp\Tool\TrafficTimelineTool::class),
+            $c->get(\App\Mcp\Tool\TrafficBreakdownTool::class),
+            $c->get(\App\Mcp\Tool\ListClicksTool::class),
+            $c->get(\App\Mcp\Tool\VisitorJourneyTool::class),
+            $c->get(\App\Mcp\Tool\ConversionsSummaryTool::class),
+            $c->get(\App\Mcp\Tool\PixelSummaryTool::class),
+        ),
+        \App\Mcp\JsonRpcDispatcher::class => static fn (ContainerInterface $c): \App\Mcp\JsonRpcDispatcher => new \App\Mcp\JsonRpcDispatcher(
+            $c->get(\App\Mcp\ToolRegistry::class),
+            $c->get(\App\Mcp\PromptRegistry::class),
+            $c->get(\App\Shared\Version\BuildInfo::class)->tag() ?: 'dev',
+            \App\Mcp\McpController::readOnlyGuard($c->get(\App\Shared\Db\Connection::class)),
+        ),
         \App\Cron\Command\PostbackDeliverCommand::class => \DI\autowire(),
         \App\Cron\Command\RrwebFlushCommand::class => \DI\autowire(),
+        \App\Cron\Command\RrwebClassifyCommand::class => \DI\autowire(),
         \App\Cron\Command\BotsUpdateExtraCommand::class => \DI\autowire(),
         \App\Shared\I18n\TranslatorFactory::class => static function (): \App\Shared\I18n\TranslatorFactory {
             return new \App\Shared\I18n\TranslatorFactory(dirname(__DIR__) . '/resources/translations');
@@ -119,6 +177,36 @@ return static function (): \DI\Container {
                 viewsDir: dirname(__DIR__) . '/resources/views',
                 assets: $c->get(\App\Shared\Asset\Manifest::class),
                 i18n:   $c->get(\App\Shared\I18n\I18n::class),
+                updateStatus: $c->get(\App\Shared\Version\UpdateStatus::class),
+            );
+        },
+
+        // ── Version ticker / update check ───────────────────────────────────
+        \App\Shared\Version\BuildInfo::class => static fn (): \App\Shared\Version\BuildInfo =>
+            \App\Shared\Version\BuildInfo::fromSuperglobals(),
+        \App\Shared\Version\UpdateStatusRepository::class => \DI\autowire(),
+        \App\Shared\Version\UpdateStateReader::class => \DI\get(\App\Shared\Version\UpdateStatusRepository::class),
+        \App\Shared\Version\ReleaseFetcher::class => static fn (): \App\Shared\Version\ReleaseFetcher =>
+            new \App\Shared\Version\GithubReleaseFetcher(
+                token: (static function (): ?string {
+                    $t = $_ENV['UPDATE_CHECK_TOKEN'] ?? null;
+                    return is_string($t) && $t !== '' ? $t : null;
+                })(),
+            ),
+        \App\Shared\Version\UpdateStatus::class => static function (\DI\Container $c): \App\Shared\Version\UpdateStatus {
+            return new \App\Shared\Version\UpdateStatus(
+                $c->get(\App\Shared\Version\BuildInfo::class),
+                $c->get(\App\Shared\Version\UpdateStatusRepository::class),
+                updateCheckEnabled(),
+                updateCheckRepo(),
+            );
+        },
+        \App\Cron\Command\VersionCheckCommand::class => static function (\DI\Container $c): \App\Cron\Command\VersionCheckCommand {
+            return new \App\Cron\Command\VersionCheckCommand(
+                $c->get(\App\Shared\Version\UpdateStatusRepository::class),
+                $c->get(\App\Shared\Version\ReleaseFetcher::class),
+                updateCheckEnabled(),
+                updateCheckRepo(),
             );
         },
     ]);

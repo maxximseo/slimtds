@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-slimTDS — Slim 4 + FrankenPHP (worker mode) + PostgreSQL 18 traffic distribution system. Self-hosted, single-tenant, internal tool. Modern rewrite of zTDS v0.8.4. Stack: PHP 8.4, Pest 4, Phinx, PHP-DI, Tailwind 4 + Alpine.js + ECharts, FingerprintJS CE pixel.
+slimTDS — Slim 4 + FrankenPHP (worker mode) + PostgreSQL 18 traffic distribution system. Self-hosted, single-tenant, internal tool. Modern rewrite of zTDS v0.8.4. Stack: PHP 8.5, Pest 5, Phinx, PHP-DI, Tailwind 4 + Alpine.js + ECharts, FingerprintJS CE pixel.
 
 
 ## Everything goes through Docker

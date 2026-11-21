@@ -6,6 +6,7 @@ namespace App\Admin\Repository;
 
 use App\Shared\Db\Connection;
 use App\Shared\Referer\SearchEngine;
+use App\Shared\Time\DateRange;
 
 final class RrwebSessionRepository
 {
@@ -41,6 +42,25 @@ final class RrwebSessionRepository
             }
             $conds[] = $expr . ' = :' . $key;
             $params[$key] = $val;
+        }
+        $activity = match ($filters['activity'] ?? null) {
+            'not_bot' => 'has_interaction IS DISTINCT FROM FALSE',
+            'active' => 'has_interaction IS TRUE',
+            'inactive' => 'has_interaction IS FALSE',
+            'unknown' => 'has_interaction IS NULL',
+            default => null,
+        };
+        if ($activity !== null) $conds[] = $activity;
+        // Day range from the filter bar (inclusive), by when the session started.
+        $from = DateRange::day($filters['from'] ?? null);
+        $to   = DateRange::day($filters['to'] ?? null);
+        if ($from !== null) {
+            $conds[] = 'started_at >= :from::timestamptz';
+            $params['from'] = $from;
+        }
+        if ($to !== null) {
+            $conds[] = 'started_at < :to_excl::timestamptz';
+            $params['to_excl'] = DateRange::exclusiveEnd($to);
         }
         // Minimum replay length (seconds) — hides bounces/short sessions.
         $minDur = (int)($filters['min_dur'] ?? 0);
@@ -90,7 +110,7 @@ final class RrwebSessionRepository
         $dir = strtolower($dir) === 'asc' ? 'ASC' : 'DESC';
         return $this->db->fetchAll(
             "SELECT session_id, campaign_id, visitor_uuid, fp_js, page_url, started_at, last_at,
-                    chunk_count, event_count, bytes, country, device, ip, os, browser, referer,
+                    chunk_count, event_count, bytes, country, device, ip, os, browser, referer, has_interaction,
                     (last_event_ms - first_event_ms) AS duration_ms
              FROM stats.rrweb_sessions
              {$where}
@@ -111,6 +131,13 @@ final class RrwebSessionRepository
         );
     }
 
+    /** Day (APP_TZ) the oldest session on record started, or null when there are none. */
+    public function earliestDay(): ?string
+    {
+        $day = $this->db->fetchScalar('SELECT min(started_at)::date::text FROM stats.rrweb_sessions');
+        return is_string($day) && $day !== '' ? $day : null;
+    }
+
     /**
      * Distinct non-empty values of a whitelisted filter field, for its dropdown.
      * @return list<string>
@@ -121,14 +148,28 @@ final class RrwebSessionRepository
         if ($expr === null || $field === 'campaign_id' || $field === 'fp') {
             return [];
         }
+
+        // Loose index scan ("skip scan"): hop between the handful of distinct
+        // values through the field's btree index instead of a full seq scan +
+        // DISTINCT over ~600k rows (which Postgres does not accelerate with an
+        // index). Turns a ~1.5-6s scan into a few ms. $expr comes from the
+        // hardcoded FILTERS whitelist — never user input. Each field is indexed
+        // (idx_rrweb_sessions_host + idx_rrweb_sessions_{country,browser,os,device}).
         $rows = $this->db->fetchAll(
-            "SELECT DISTINCT {$expr} AS v FROM stats.rrweb_sessions
-             WHERE LOWER(country) IS DISTINCT FROM 'cn' AND {$expr} IS NOT NULL AND {$expr} <> '' ORDER BY v",
+            "WITH RECURSIVE t AS (
+                 SELECT (SELECT {$expr} FROM stats.rrweb_sessions
+                         WHERE LOWER(country) IS DISTINCT FROM 'cn' AND {$expr} <> '' ORDER BY 1 LIMIT 1) AS v
+                 UNION ALL
+                 SELECT (SELECT {$expr} FROM stats.rrweb_sessions
+                         WHERE LOWER(country) IS DISTINCT FROM 'cn' AND {$expr} > t.v AND {$expr} <> '' ORDER BY 1 LIMIT 1)
+                 FROM t WHERE t.v IS NOT NULL
+             )
+             SELECT v FROM t WHERE v IS NOT NULL ORDER BY v",
         );
-        return array_values(array_map(
+        return array_map(
             static fn (array $r): string => (string)($r['v'] ?? ''),
             $rows,
-        ));
+        );
     }
 
     /**
@@ -136,7 +177,7 @@ final class RrwebSessionRepository
      * events — lets the sessions list show the traffic source via the fp link
      * even when the session's own document.referrer was empty.
      *
-     * @param list<string> $fps
+     * @param array<mixed> $fps
      * @return array<string,string> fp_js => referer
      */
     public function pixelSourceReferers(array $fps): array
@@ -173,7 +214,7 @@ final class RrwebSessionRepository
     {
         return $this->db->fetchOne(
             'SELECT session_id, campaign_id, visitor_uuid, fp_js, page_url, started_at, last_at,
-                    chunk_count, event_count, bytes, country, device, ip, os, browser, referer,
+                    chunk_count, event_count, bytes, country, device, ip, os, browser, referer, has_interaction,
                     (last_event_ms - first_event_ms) AS duration_ms
              FROM stats.rrweb_sessions WHERE LOWER(country) IS DISTINCT FROM \'cn\' AND session_id = :s',
             ['s' => $sessionId],

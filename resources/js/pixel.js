@@ -17,18 +17,120 @@ import { record } from 'rrweb'
     }
   }
 
+  // ── Recording opt-out ───────────────────────────────────────────────────
+  // Landers that only need entry-source/pageview tracking opt out of rrweb with
+  // `<script src="/p.js?c=X&rec=0">` (or data-rec="0"). Fingerprint and pageview
+  // still fire — this is a mode of the one pixel, not a second script.
+  let recEnabled = true
+  if (script) {
+    let recAttr = script.getAttribute('data-rec')
+    if (recAttr === null) {
+      try {
+        recAttr = new URL(script.src).searchParams.get('rec')
+      } catch (_) {
+        recAttr = null
+      }
+    }
+    if (recAttr === '0' || recAttr === 'false' || recAttr === 'off') recEnabled = false
+  }
+
+  // ── Entry referer ───────────────────────────────────────────────────────
+  // Captured once per tab and replayed on every later pageview. After the first
+  // in-lander navigation document.referrer points at the lander itself, which is
+  // exactly how genuine search traffic becomes indistinguishable from direct —
+  // especially behind server-side go.php redirects. Only an EXTERNAL referer
+  // counts as an entry source; a same-host one is stored as empty.
+  let entryRef = ''
+  try {
+    const stored = sessionStorage.getItem('slim_ref')
+    if (stored === null) {
+      const r = document.referrer || ''
+      let external = false
+      if (r) {
+        try {
+          external = new URL(r).hostname.replace(/^www\./, '') !== location.hostname.replace(/^www\./, '')
+        } catch (_) {}
+      }
+      entryRef = external ? r : ''
+      sessionStorage.setItem('slim_ref', entryRef)
+    } else {
+      entryRef = stored
+    }
+  } catch (_) {
+    entryRef = document.referrer || ''
+  }
+
+  // ── Test link ───────────────────────────────────────────────────────────
+  // Carry signed test-link parameters from the lander into tracked clicks.
+  var TEST_PARAMS = ['_t', '_geo', '_dbg']
+  var testQs = ''
+  try {
+    var here = new URLSearchParams(location.search)
+    if (here.get('_t')) {
+      var q = new URLSearchParams()
+      for (var ti = 0; ti < TEST_PARAMS.length; ti++) {
+        var tv = here.get(TEST_PARAMS[ti])
+        if (tv) q.set(TEST_PARAMS[ti], tv)
+      }
+      testQs = q.toString()
+      sessionStorage.setItem('slim_test', testQs)
+    } else {
+      testQs = sessionStorage.getItem('slim_test') || ''
+    }
+  } catch (_) {}
+
+  // The logged page URL must not carry the key into stats.pixel_events.
+  function pageUrl() {
+    if (!testQs) return location.href
+    try {
+      var u = new URL(location.href)
+      for (var j = 0; j < TEST_PARAMS.length; j++) u.searchParams.delete(TEST_PARAMS[j])
+      return u.href
+    } catch (_) {
+      return location.href
+    }
+  }
+
   // ── Endpoint URL ────────────────────────────────────────────────────────
   // Relative `p/event` (no leading slash) so the endpoint resolves next to
   // wherever p.js was served from. Two cases this handles:
-  //   1. <script src="https://example.com/p.js?c=X">      → POST https://example.com/p/event
+  //   1. <script src="https://tds.example.com/p.js?c=X">      → POST https://tds.example.com/p/event
   //   2. <script src="/a/p.js?c=X"> (proxied via nginx)   → POST /a/p/event   (same-origin, no CORS)
-  // Case 2 hides example.com from the visible network footprint of the host site.
+  // Case 2 hides tds.example.com from the visible network footprint of the host site.
   const base = (script && script.src) ? script.src : location.href
   let eventEndpoint
   try {
     eventEndpoint = new URL('p/event', base).href
   } catch (_) {
     eventEndpoint = 'p/event'
+  }
+
+  // ── Test link: lander buttons ───────────────────────────────────────────
+  // Lander buttons (/play/<button>/, or a direct link to the TDS) are how a
+  // visitor reaches the click engine. Without the key such a click would
+  // route as ordinary traffic, so in test mode the link is tagged at the
+  // last moment — on the gesture, which also covers buttons rendered later.
+  if (testQs) {
+    var tdsOrigin = ''
+    try { tdsOrigin = new URL(base).origin } catch (_) {}
+    var tagLink = function (ev) {
+      var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null
+      if (!a) return
+      try {
+        var u = new URL(a.getAttribute('href'), location.href)
+        var toPlay = u.origin === location.origin && u.pathname.indexOf('/play/') === 0
+        // A proxied pixel (/a/p.js) shares the lander's origin — then only
+        // /play/ counts, or every internal link would be tagged.
+        var toTds = tdsOrigin !== location.origin && u.origin === tdsOrigin
+        if (!(toPlay || toTds) || u.searchParams.get('_t')) return
+        new URLSearchParams(testQs).forEach(function (v, k) { u.searchParams.set(k, v) })
+        a.href = u.href
+      } catch (_) {}
+    }
+    var TAG_EVENTS = ['mousedown', 'touchstart', 'keydown', 'click', 'auxclick']
+    for (var te = 0; te < TAG_EVENTS.length; te++) {
+      try { document.addEventListener(TAG_EVENTS[te], tagLink, true) } catch (_) {}
+    }
   }
 
   // ── Send helper ─────────────────────────────────────────────────────────
@@ -50,8 +152,9 @@ import { record } from 'rrweb'
   function track(eventName, props, fp) {
     var payload = {
       c: campaignId,
-      url: location.href,
+      url: pageUrl(),
       ref: document.referrer || null,
+      eref: entryRef || null,
       ua: navigator.userAgent || null,
       lang: navigator.language || null,
       tz: Intl.DateTimeFormat
@@ -99,7 +202,7 @@ import { record } from 'rrweb'
   try {
     var cfg = window.__slim || {}
     var rate = typeof cfg.rate === 'number' ? cfg.rate : 100
-    if (campaignId && rate > 0 && Math.random() * 100 < rate) {
+    if (campaignId && recEnabled && rate > 0 && Math.random() * 100 < rate) {
       startRecording()
     }
   } catch (_) {}
@@ -126,14 +229,8 @@ import { record } from 'rrweb'
     } catch (_) { sid = newSid() }
     var buffer = []
     var seq = 0
-    // Entry referer of the visit — captured once and reused across same-tab
-    // navigations (the entry page's document.referrer carries the external
-    // source; later in-visit pages reference the lander itself).
-    var entryRef
-    try {
-      entryRef = sessionStorage.getItem('slim_ref')
-      if (entryRef === null) { entryRef = document.referrer || ''; sessionStorage.setItem('slim_ref', entryRef) }
-    } catch (_) { entryRef = document.referrer || '' }
+    // Entry referer comes from the shared capture above — one definition for
+    // both the pageview payload and the recording, so they can never disagree.
     // Resolve the FingerprintJS id once; it links the session to clicks/pixel
     // events server-side. May be null on early chunks until it resolves.
     var fpId = null

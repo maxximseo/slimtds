@@ -1,10 +1,10 @@
 # ===== Stage: assets-builder =====
-FROM oven/bun:1-alpine AS assets-builder
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS assets-builder
 
 WORKDIR /app
 
-COPY package.json bunfig.toml ./
-RUN bun install
+COPY package.json bun.lock bunfig.toml ./
+RUN bun install --frozen-lockfile
 
 COPY resources ./resources
 COPY public/assets ./public/assets
@@ -14,7 +14,7 @@ COPY tailwind.config.js ./
 RUN bun run build
 
 # ===== Stage: vendor =====
-FROM composer:2 AS vendor
+FROM composer:2.10.3@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac AS vendor
 
 WORKDIR /app
 
@@ -25,7 +25,8 @@ COPY . ./
 RUN composer dump-autoload --optimize --classmap-authoritative
 
 # ===== Stage: runtime =====
-FROM dunglas/frankenphp:1.12.4-php8.4-alpine AS runtime
+# Pin the PHP 8.5 / FrankenPHP runtime for reproducible builds.
+FROM dunglas/frankenphp:1.13.2-php8.5.12-alpine@sha256:f4947926b4c5070176be7c72b03939e045f7ae9d249a3219cf9708bd5e6d0ff2 AS runtime
 
 # Системные зависимости для расширений
 RUN apk add --no-cache \
@@ -57,6 +58,22 @@ RUN echo "memory_limit=256M" > /usr/local/etc/php/conf.d/zz-app.ini \
  && echo "opcache.jit_buffer_size=64M" >> /usr/local/etc/php/conf.d/zz-app.ini \
  && echo "apc.enable_cli=1" >> /usr/local/etc/php/conf.d/zz-app.ini
 
+# Build identity. One ARG per instruction — unlike ENV, ARG declares a single
+# build argument and the multi-name form fails the build.
+#
+# These are baked, never overridden at runtime. A compose `environment` mapping
+# overrides the image ENV even when interpolation yields an empty string, so a
+# `${APP_VERSION:-}` entry would erase a correctly stamped release image on an
+# ordinary `docker compose up`. Dev overrides live in docker-compose.override.yml.
+ARG APP_VERSION=""
+ARG APP_COMMIT=""
+ARG APP_BUILD_DATE=""
+ARG APP_BUILD_KIND=""
+ENV APP_VERSION=$APP_VERSION \
+    APP_COMMIT=$APP_COMMIT \
+    APP_BUILD_DATE=$APP_BUILD_DATE \
+    APP_BUILD_KIND=$APP_BUILD_KIND
+
 WORKDIR /app
 
 COPY --from=vendor    /app /app
@@ -65,13 +82,13 @@ COPY --from=assets-builder /app/public/p.js   /app/public/p.js
 
 COPY config/frankenphp/ /app/config/frankenphp/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-ENV FRANKENPHP_CONFIG="/app/config/frankenphp/Caddyfile.dev"
+COPY docker/healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh
 
 EXPOSE 80 443
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # No --config here: entrypoint.sh injects the Caddyfile for the active DEPLOY_MODE.
-# (A hardcoded --config would be appended after entrypoint's and win, forcing dev config.)
+# A hardcoded --config is appended *after* entrypoint's own and wins, which silently
+# forced the dev config in every mode.
 CMD ["frankenphp", "run"]
