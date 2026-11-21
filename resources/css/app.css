@@ -1382,3 +1382,17 @@ html[data-theme="dark"] {
     }
   }
 }
+
+@layer components {
+  .url-full {
+    display: inline-block;
+    max-width: 280px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    vertical-align: top;
+  }
+  @media (max-width: 640px) {
+    .url-full { max-width: 220px; }
+  }
+}
