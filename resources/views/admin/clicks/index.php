@@ -22,7 +22,7 @@ $flag = function (?string $cc): string {
 // Build a /admin/clicks URL that preserves currently active filters but
 // applies the given override(s). Used to make every cell value a one-click
 // shortcut to filter the list to that value.
-$filterFields = ['campaign_id', 'country', 'device', 'bot_view', 'is_uniq', 'is_trash', 'since', 'from', 'to', 'range', 'search', 'entry_ref', 'fp_js', 'fp_js_has'];
+$filterFields = ['campaign_id', 'country', 'device', 'bot_view', 'is_uniq', 'unique_ip', 'is_trash', 'since', 'from', 'to', 'range', 'search', 'entry_ref', 'fp_js', 'fp_js_has'];
 $filterUrl = function (array $overrides) use ($filters, $filterFields): string {
     $q = [];
     foreach ($filterFields as $k) {
@@ -291,6 +291,14 @@ require __DIR__ . '/../../_partials/page-header.php';
         </select>
     </div>
     <div class="filter-field">
+        <span class="filter-label"><?= e(t('clicks.filter.unique_ip')) ?></span>
+        <label style="height:32px;display:flex;align-items:center;gap:7px;font-size:0.8rem;white-space:nowrap;cursor:pointer">
+            <input type="hidden" name="unique_ip" value="0">
+            <input type="checkbox" name="unique_ip" value="1" <?= ($filters['unique_ip'] ?? '1') === '1' ? 'checked' : '' ?> style="margin:0">
+            <span><?= e(t('clicks.filter.unique_ip_enabled')) ?></span>
+        </label>
+    </div>
+    <div class="filter-field">
         <label class="filter-label"><?= e(t('clicks.filter.uniq')) ?></label>
         <select name="is_uniq" class="input-sm" style="width:130px">
             <option value=""><?= e(t('filter_opt.any')) ?></option>
@@ -415,7 +423,7 @@ require __DIR__ . '/../../_partials/page-header.php';
 // Sibling form (HTML forms cannot nest) carrying the filters that are actually
 // in effect right now. Only the keys the controller accepts as saveable are
 // sent; posting them all empty is how the operator clears their default.
-$saveableView = ['is_trash', 'bot_view', 'search', 'entry_ref', 'fp_js_has'];
+$saveableView = ['is_trash', 'bot_view', 'search', 'entry_ref', 'fp_js_has', 'unique_ip'];
 ?>
 <form id="save-view-form" method="post" action="<?= e(url('/admin/clicks/view')) ?>" style="display:none">
     <?= csrf_field($csrf_token) ?>
@@ -609,6 +617,7 @@ $saveableView = ['is_trash', 'bot_view', 'search', 'entry_ref', 'fp_js_has'];
         'device'      => $filters['device']      ?? null,
         'bot_view'    => ($filters['bot_view'] ?? 'hide') !== 'hide' ? $filters['bot_view'] : null,
         'is_uniq'     => isset($filters['is_uniq']) && $filters['is_uniq'] !== null ? ($filters['is_uniq'] ? '1' : '0') : null,
+        'unique_ip'   => $filters['unique_ip'] ?? null,
         'is_trash'    => ($filters['is_trash'] ?? 'hide') !== 'hide' ? $filters['is_trash'] : null,
         'search'      => $filters['search'] ?? null,
         'entry_ref'   => $filters['entry_ref'] ?? null,

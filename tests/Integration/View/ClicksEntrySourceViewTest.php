@@ -131,12 +131,22 @@ test('the entry-source filter survives pagination', function (): void {
     $rows = array_map(fn ($i) => clickRow(['id' => sprintf('00000000-0000-7000-8000-0000000%05d', $i)]), range(1, 3));
     $html = test()->view->render('admin/clicks/index', [
         'title' => 'Clicks', 'items' => $rows, 'total' => 200, 'pages' => 4, 'page' => 1,
-        'filters' => ['entry_ref' => 'google'], 'timeline' => [], 'campaigns' => [],
+        'filters' => ['entry_ref' => 'google', 'unique_ip' => '0'], 'timeline' => [], 'campaigns' => [],
         'columns_meta' => \App\Admin\Clicks\ColumnPreferences::COLUMNS,
         'visible_columns' => ['referer', 'entry_referer'],
         'sort' => ['field' => 'created_at', 'dir' => 'desc'],
         'visitor' => null, 'lang' => 'en', 'csrf_token' => 'x', '__layout__' => null,
     ]);
 
-    expect($html)->toMatch('/entry_ref=google[^"\']*page=2|page=2[^"\']*entry_ref=google/');
+    expect($html)->toMatch('/entry_ref=google[^"\']*page=2|page=2[^"\']*entry_ref=google/')
+        ->and($html)->toMatch('/unique_ip=0[^"\']*page=2|page=2[^"\']*unique_ip=0/');
+});
+
+test('unique ip is checked by default and explicitly submits an unchecked state', function (): void {
+    $checked = clicksPage([clickRow()]);
+    $unchecked = clicksPage([clickRow()], ['unique_ip' => '0']);
+
+    expect($checked)->toMatch('/type="hidden" name="unique_ip" value="0"/')
+        ->and($checked)->toMatch('/type="checkbox" name="unique_ip" value="1" checked/')
+        ->and($unchecked)->toMatch('/type="checkbox" name="unique_ip" value="1"(?! checked)/');
 });

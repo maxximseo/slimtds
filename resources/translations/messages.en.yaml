@@ -352,6 +352,8 @@ clicks:
     bot: Bot
     routing: Routing
     uniq: Uniq
+    unique_ip: Unique IP
+    unique_ip_enabled: newest click per IP
     fingerprint: Fingerprint
     referer: Referer
     entry_ref: Entry source

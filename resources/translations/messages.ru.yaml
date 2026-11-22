@@ -366,6 +366,8 @@ clicks:
     bot: Бот
     routing: Маршрутизация
     uniq: Уник
+    unique_ip: Уникальные IP
+    unique_ip_enabled: свежий клик на IP
     fingerprint: Фингерпринт
     referer: Referer
     entry_ref: Источник входа
