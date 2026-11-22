@@ -109,14 +109,14 @@ final class ClickRepository
     }
 
     /**
-     * @param array{campaign_id?:?string, country?:?string, device?:?string, is_bot?:?bool, is_uniq?:?bool, since?:?string, is_trash?:?string, from?:?string, to?:?string, search?:?string, entry_ref?:?string, ip?:?string, click_id?:?string, visitor?:?string, fp_js?:?string} $filters
+     * @param array{campaign_id?:?string, country?:?string, device?:?string, is_bot?:?bool, is_uniq?:?bool, unique_ip?:?string, since?:?string, is_trash?:?string, from?:?string, to?:?string, search?:?string, entry_ref?:?string, ip?:?string, click_id?:?string, visitor?:?string, fp_js?:?string} $filters
      * @param string $orderBy SQL fragment, must come from a whitelist (e.g. "c.created_at DESC")
      * @return list<array<string,mixed>>
      */
     public function page(int $page, int $perPage, array $filters = [], string $orderBy = 'c.created_at DESC'): array
     {
         $offset = max(0, ($page - 1) * $perPage);
-        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where, $params] = $this->buildFromWhere($filters);
         $params['limit'] = $perPage;
         $params['offset'] = $offset;
 
@@ -135,7 +135,7 @@ final class ClickRepository
                     fl.name AS flow_name,
                     ({$entrySource}) AS entry_referer,
                     (EXISTS (SELECT 1 FROM core.conversions cv WHERE cv.click_id = c.id))::int AS has_conversion
-             FROM stats.clicks c
+             FROM {$from}
              LEFT JOIN core.campaigns cmp ON cmp.id = c.campaign_id
              LEFT JOIN core.offers o      ON o.id   = c.offer_id
              LEFT JOIN core.flows fl      ON fl.id  = c.flow_id
@@ -149,9 +149,9 @@ final class ClickRepository
     /** @param array<string,mixed> $filters */
     public function count(array $filters = []): int
     {
-        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where, $params] = $this->buildFromWhere($filters);
         return (int)$this->db->fetchScalar(
-            "SELECT count(*) FROM stats.clicks c {$where}",
+            "SELECT count(*) FROM {$from} {$where}",
             $params,
         );
     }
@@ -173,7 +173,7 @@ final class ClickRepository
      */
     public function summary(array $filters = []): array
     {
-        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where, $params] = $this->buildFromWhere($filters);
         $row = $this->db->fetchOne(
             "SELECT count(*)                                                    AS clicks,
                     count(DISTINCT c.visitor_uuid)                              AS uniq_visitors,
@@ -181,7 +181,7 @@ final class ClickRepository
                     count(cv.id)                                                AS conversions,
                     count(cv.id) FILTER (WHERE cv.status = 'approved')          AS approved,
                     COALESCE(sum(cv.payout) FILTER (WHERE cv.status = 'approved'), 0)::text AS payout
-             FROM stats.clicks c
+             FROM {$from}
              LEFT JOIN core.conversions cv ON cv.click_id = c.id
              {$where}",
             $params,
@@ -206,10 +206,10 @@ final class ClickRepository
      */
     public function conversionStatuses(array $filters = []): array
     {
-        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where, $params] = $this->buildFromWhere($filters);
         $rows = $this->db->fetchAll(
             "SELECT cv.status, count(*) AS n
-             FROM stats.clicks c
+             FROM {$from}
              JOIN core.conversions cv ON cv.click_id = c.id
              {$where}
              GROUP BY cv.status",
@@ -234,13 +234,13 @@ final class ClickRepository
      */
     public function topLanders(array $filters = [], int $limit = 10): array
     {
-        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where, $params] = $this->buildFromWhere($filters);
         $params['limit'] = $limit;
         $where .= ($where === '' ? 'WHERE ' : ' AND ') . "c.lander_host IS NOT NULL AND c.lander_host <> ''";
 
         return array_map(static fn (array $r): array => ['label' => (string)$r['label'], 'clicks' => (int)$r['clicks']], $this->db->fetchAll(
             "SELECT c.lander_host AS label, count(*) AS clicks
-             FROM stats.clicks c
+             FROM {$from}
              {$where}
              GROUP BY c.lander_host
              ORDER BY clicks DESC, label
@@ -258,13 +258,13 @@ final class ClickRepository
      */
     public function topOffers(array $filters = [], int $limit = 10): array
     {
-        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where, $params] = $this->buildFromWhere($filters);
         $params['limit'] = $limit;
         $where .= ($where === '' ? 'WHERE ' : ' AND ') . 'c.offer_id IS NOT NULL';
 
         return array_map(static fn (array $r): array => ['label' => (string)$r['label'], 'clicks' => (int)$r['clicks']], $this->db->fetchAll(
             "SELECT COALESCE(o.name, c.offer_id::text) AS label, count(*) AS clicks
-             FROM stats.clicks c
+             FROM {$from}
              LEFT JOIN core.offers o ON o.id = c.offer_id
              {$where}
              GROUP BY 1
@@ -276,7 +276,7 @@ final class ClickRepository
 
     /**
      * Clicks grouped by one dimension, with the conversions of those clicks.
-     * Shares buildWhere() with the list, so a row here is the same set of
+     * Shares buildFromWhere() with the list, so a row here is the same set of
      * clicks the admin UI would show under the same filters.
      *
      * @param array<string,mixed> $filters
@@ -286,7 +286,7 @@ final class ClickRepository
     {
         $expr = self::BREAKDOWN_DIMENSIONS[$dimension]
             ?? throw new \InvalidArgumentException("unknown dimension: {$dimension}");
-        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where, $params] = $this->buildFromWhere($filters);
         $params['lim'] = $limit;
         $rows = $this->db->fetchAll(
             "SELECT COALESCE(NULLIF({$expr}, ''), '(none)')                     AS label,
@@ -295,7 +295,7 @@ final class ClickRepository
                     count(cv.id)                                                 AS conversions,
                     count(cv.id) FILTER (WHERE cv.status = 'approved')           AS approved,
                     COALESCE(sum(cv.payout) FILTER (WHERE cv.status = 'approved'), 0)::text AS payout
-             FROM stats.clicks c
+             FROM {$from}
              LEFT JOIN core.conversions cv ON cv.click_id = c.id
              LEFT JOIN core.campaigns cmp  ON cmp.id = c.campaign_id
              LEFT JOIN core.offers o       ON o.id   = c.offer_id
@@ -329,7 +329,11 @@ final class ClickRepository
     public function timeline(array $filters, TimelineWindow $window): array
     {
         [$extraConds, $params] = $this->filterConditionsNoTime($filters);
-        $extra = $extraConds ? ' AND ' . implode(' AND ', $extraConds) : '';
+        $conditions = array_merge(
+            ["c.created_at >= {$window->startSql}", "c.created_at < {$window->endSql}"],
+            $extraConds,
+        );
+        [$from, $where] = $this->uniqueIpFrom('WHERE ' . implode(' AND ', $conditions), $filters);
         $params += $window->params;
         $step = $window->step;
 
@@ -347,10 +351,8 @@ final class ClickRepository
                            count(*)                            AS clicks,
                            count(*) FILTER (WHERE c.is_uniq)   AS uniq,
                            count(*) FILTER (WHERE c.is_bot)    AS bot
-                    FROM stats.clicks c
-                    WHERE c.created_at >= {$window->startSql}
-                      AND c.created_at <  {$window->endSql}
-                      {$extra}
+                    FROM {$from}
+                    {$where}
                     GROUP BY 1
                 )
                 SELECT to_char(h.hour, 'YYYY-MM-DD"T"HH24:00:00') AS hour,
@@ -580,6 +582,34 @@ final class ClickRepository
              LIMIT :lim",
             ['v' => $visitorUuid, 'days' => $sinceDays, 'lim' => $limit],
         );
+    }
+
+    /**
+     * @param array<string,mixed> $filters
+     * @return array{0:string, 1:string, 2:array<string,mixed>}
+     */
+    private function buildFromWhere(array $filters): array
+    {
+        [$where, $params] = $this->buildWhere($filters);
+        [$from, $where] = $this->uniqueIpFrom($where, $filters);
+        return [$from, $where, $params];
+    }
+
+    /**
+     * Keep only the newest click per IP inside the already filtered period.
+     * Every read model uses the same derived table, so cards and charts do not
+     * disagree with the rows shown in the list.
+     *
+     * @param array<string,mixed> $filters
+     * @return array{0:string, 1:string}
+     */
+    private function uniqueIpFrom(string $where, array $filters): array
+    {
+        if (($filters['unique_ip'] ?? null) !== '1') return ['stats.clicks c', $where];
+        return [
+            "(SELECT DISTINCT ON (c.ip) c.* FROM stats.clicks c {$where} ORDER BY c.ip, c.created_at DESC, c.id DESC) c",
+            '',
+        ];
     }
 
     /**

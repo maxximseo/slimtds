@@ -20,7 +20,7 @@ final class ClickController
     /** Days in the default list window — mirrors ClickRepository's `interval '7 days'`. */
     private const DEFAULT_DAYS = 7;
 
-    private const SAVEABLE = ['is_trash', 'bot_view', 'search', 'entry_ref', 'fp_js_has'];
+    private const SAVEABLE = ['is_trash', 'bot_view', 'search', 'entry_ref', 'fp_js_has', 'unique_ip'];
 
     private const VIEW_KEY = 'clicks';
 
@@ -78,6 +78,9 @@ final class ClickController
             ? $params['entry_ref']
             : null;
         if ($hasExactLookup) $entryRef = null;
+        $uniqueIp = array_key_exists('unique_ip', $params)
+            ? $params['unique_ip'] === '1'
+            : !$hasExactLookup;
 
         // Day range from the filter bar. Unset = the repository's rolling
         // 7-day default; the inputs are prefilled with that same window.
@@ -90,6 +93,7 @@ final class ClickController
             'device'      => $params['device'] ?? null,
             'bot_view'    => $botView,
             'is_uniq'     => isset($params['is_uniq']) && $params['is_uniq'] !== '' ? ($params['is_uniq'] === '1') : null,
+            'unique_ip'   => $uniqueIp ? '1' : '0',
             'is_trash'    => $routing,
             'since'       => $params['since'] ?? null,
             'from'        => $range->from,
