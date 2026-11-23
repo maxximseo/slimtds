@@ -46,8 +46,10 @@ return static function (App $app): void {
     $app->map(['GET', 'DELETE'], '/mcp', [\App\Mcp\McpController::class, 'methodNotAllowed']);
     $app->get('/mcp/skill', \App\Mcp\SkillController::class);
 
-    // Admin group with middleware stack
-    $app->group('/admin', function (RouteCollectorProxy $g): void {
+    $app->get('/integration/api/overview', [\App\Admin\Controller\IntegrationController::class, 'overview'])
+        ->add(\App\Admin\Middleware\IntegrationAuthMiddleware::class);
+
+    $adminRoutes = static function (RouteCollectorProxy $g): void {
         // Login — gets rate-limit in addition
         $g->get('/login', function (Request $request, Response $response, \App\Shared\View\View $view): Response {
             $data = array_merge(
@@ -186,11 +188,21 @@ return static function (App $app): void {
             );
             return $view->respond($response, 'admin/dashboard', $data);
         });
-    })
+    };
+
+    $app->group('/admin', $adminRoutes)
         ->add(\App\Admin\Middleware\PasswordChangeRequiredMiddleware::class)
         ->add(AuthMiddleware::class)
         ->add(CsrfMiddleware::class)
         ->add(LocaleMiddleware::class)
+        ->add(SessionMiddleware::class);
+
+    $app->group('/integration/admin', $adminRoutes)
+        ->add(\App\Admin\Middleware\PasswordChangeRequiredMiddleware::class)
+        ->add(AuthMiddleware::class)
+        ->add(CsrfMiddleware::class)
+        ->add(LocaleMiddleware::class)
+        ->add(\App\Admin\Middleware\IntegrationAuthMiddleware::class)
         ->add(SessionMiddleware::class);
 
     // Движок редиректа (slug) — last so static /admin, /postback, /p.js, /__health win
